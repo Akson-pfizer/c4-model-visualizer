@@ -1,0 +1,93 @@
+{
+  "layer": "context",
+  "title": "System Context",
+  "subtitle": "Internet Banking System",
+  "description": "The big picture: the system under design and the people and external systems it talks to. Intended audience: everyone, technical or not.",
+  "note": null,
+  "legend": [
+    { "kind": "person", "label": "Person" },
+    { "kind": "system", "label": "Software System (in scope)" },
+    { "kind": "systemExternal", "label": "Software System (external)" }
+  ],
+  "boundaries": [],
+  "nodes": [
+    {
+      "id": "customer",
+      "type": "c4Node",
+      "position": { "x": 20, "y": 260 },
+      "data": {
+        "kind": "person",
+        "name": "Customer",
+        "technology": null,
+        "description": "A customer of the bank, with personal bank accounts."
+      }
+    },
+    {
+      "id": "ibs",
+      "type": "c4Node",
+      "position": { "x": 360, "y": 260 },
+      "data": {
+        "kind": "system",
+        "name": "Internet Banking System",
+        "technology": null,
+        "description": "Allows customers to view information about their bank accounts and make payments."
+      }
+    },
+    {
+      "id": "email-system",
+      "type": "c4Node",
+      "position": { "x": 700, "y": 150 },
+      "data": {
+        "kind": "systemExternal",
+        "name": "E-Mail System",
+        "technology": null,
+        "description": "The internal Microsoft Exchange e-mail system."
+      }
+    },
+    {
+      "id": "mainframe",
+      "type": "c4Node",
+      "position": { "x": 700, "y": 370 },
+      "data": {
+        "kind": "systemExternal",
+        "name": "Mainframe Banking System",
+        "technology": null,
+        "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-customer-ibs",
+      "source": "customer",
+      "target": "ibs",
+      "type": "c4Edge",
+      "label": "Uses",
+      "data": { "technology": null }
+    },
+    {
+      "id": "e-ibs-email",
+      "source": "ibs",
+      "target": "email-system",
+      "type": "c4Edge",
+      "label": "Sends e-mails using",
+      "data": { "technology": "SMTP" }
+    },
+    {
+      "id": "e-email-customer",
+      "source": "email-system",
+      "target": "customer",
+      "type": "c4Edge",
+      "label": "Sends e-mails to",
+      "data": { "technology": null }
+    },
+    {
+      "id": "e-ibs-mainframe",
+      "source": "ibs",
+      "target": "mainframe",
+      "type": "c4Edge",
+      "label": "Uses",
+      "data": { "technology": null }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+:root {
+  /* Soft white / blue palette. Single fixed theme by design (rule: "soft white and blue") */
+  --surface: #ffffff;
+  --surface-muted: #f5f8fc;
+  --surface-sunken: #eef3fa;
+  --canvas-bg: #fbfcfe;
+
+  --border: #dbe4f0;
+  --border-strong: #bcd0e8;
+
+  --text: #253345;
+  --text-muted: #5b6b80;
+  --text-faint: #8695a8;
+
+  --blue-50: #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-200: #bfdbfe;
+  --blue-300: #93c5fd;
+  --blue-400: #60a5fa;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --blue-700: #1d4ed8;
+  --blue-900: #1e3a6a;
+
+  --accent: var(--blue-600);
+  --accent-strong: var(--blue-700);
+  --accent-soft: var(--blue-50);
+  --focus-ring: #1d4ed8;
+
+  --shadow-sm: 0 1px 2px rgba(29, 78, 216, 0.06);
+  --shadow-md: 0 4px 16px rgba(29, 78, 216, 0.1);
+  --shadow-lg: 0 12px 32px rgba(29, 78, 216, 0.14);
+
+  --sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  color-scheme: light;
+  font: 15px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--canvas-bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--sans);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+#app {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}

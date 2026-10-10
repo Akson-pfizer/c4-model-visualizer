@@ -1,0 +1,76 @@
+{
+  "layer": "code",
+  "title": "Code",
+  "subtitle": "Zoomed into: Security Component",
+  "description": "Classes, interfaces, and their relationships inside one component. Intended audience: the developer currently working on this code.",
+  "note": "C4 guidance recommends against hand-modelling this level: generate it from your IDE or build tooling and link out to source instead. This diagram is an illustrative demo only.",
+  "legend": [
+    { "kind": "codeInterface", "label": "Interface" },
+    { "kind": "codeClass", "label": "Class" },
+    { "kind": "codeEnum", "label": "Enum" }
+  ],
+  "boundaries": [],
+  "nodes": [
+    {
+      "id": "security-service-impl",
+      "type": "c4Node",
+      "position": { "x": 360, "y": 40 },
+      "data": {
+        "kind": "codeClass",
+        "name": "SecurityServiceImpl",
+        "technology": "class",
+        "description": "Default implementation of SecurityService."
+      }
+    },
+    {
+      "id": "security-service",
+      "type": "c4Node",
+      "position": { "x": 40, "y": 40 },
+      "data": {
+        "kind": "codeInterface",
+        "name": "SecurityService",
+        "technology": "interface",
+        "description": "Sign-in, password change, and session operations."
+      }
+    },
+    {
+      "id": "user-repository",
+      "type": "c4Node",
+      "position": { "x": 640, "y": 40 },
+      "data": {
+        "kind": "codeClass",
+        "name": "UserRepository",
+        "technology": "class, JDBC",
+        "description": "Data access for User records."
+      }
+    },
+    {
+      "id": "user",
+      "type": "c4Node",
+      "position": { "x": 640, "y": 240 },
+      "data": {
+        "kind": "codeClass",
+        "name": "User",
+        "technology": "class, entity",
+        "description": "A registered Internet banking user."
+      }
+    },
+    {
+      "id": "role",
+      "type": "c4Node",
+      "position": { "x": 360, "y": 240 },
+      "data": {
+        "kind": "codeEnum",
+        "name": "Role",
+        "technology": "enum",
+        "description": "Authorisation role assigned to a user."
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e-impl-interface", "source": "security-service-impl", "target": "security-service", "type": "c4Edge", "label": "implements", "data": { "technology": null } },
+    { "id": "e-impl-repo", "source": "security-service-impl", "target": "user-repository", "type": "c4Edge", "label": "uses", "data": { "technology": null } },
+    { "id": "e-repo-user", "source": "user-repository", "target": "user", "type": "c4Edge", "label": "returns / persists", "data": { "technology": null } },
+    { "id": "e-impl-role", "source": "security-service-impl", "target": "role", "type": "c4Edge", "label": "checks", "data": { "technology": null } }
+  ]
+}

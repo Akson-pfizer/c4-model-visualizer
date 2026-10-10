@@ -1,0 +1,129 @@
+{
+  "layer": "component",
+  "title": "Component",
+  "subtitle": "Zoomed into: API Application container",
+  "description": "The internal building blocks of a single container and their responsibilities. Intended audience: developers and reviewers working on this container. This level is optional — model it only where it adds real value.",
+  "note": "Component modelling is optional per C4 guidance. A container can go to Dev without every component being individually modelled here.",
+  "legend": [
+    { "kind": "container", "label": "Container" },
+    { "kind": "containerDb", "label": "Container (database)" },
+    { "kind": "component", "label": "Component" },
+    { "kind": "systemExternal", "label": "Software System (external)" }
+  ],
+  "boundaries": [
+    {
+      "id": "api-boundary",
+      "label": "API Application",
+      "position": { "x": 300, "y": 40 },
+      "size": { "width": 620, "height": 400 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "signin",
+      "type": "c4Node",
+      "parentId": "api-boundary",
+      "extent": "parent",
+      "position": { "x": 40, "y": 40 },
+      "data": {
+        "kind": "component",
+        "name": "Sign In Controller",
+        "technology": "Spring MVC Rest Controller",
+        "description": "Allows users to sign in to the Internet banking system."
+      }
+    },
+    {
+      "id": "accountssummary",
+      "type": "c4Node",
+      "parentId": "api-boundary",
+      "extent": "parent",
+      "position": { "x": 340, "y": 40 },
+      "data": {
+        "kind": "component",
+        "name": "Accounts Summary Controller",
+        "technology": "Spring MVC Rest Controller",
+        "description": "Provides customers with a summary of their bank accounts."
+      }
+    },
+    {
+      "id": "security",
+      "type": "c4Node",
+      "parentId": "api-boundary",
+      "extent": "parent",
+      "position": { "x": 40, "y": 220 },
+      "data": {
+        "kind": "component",
+        "name": "Security Component",
+        "technology": "Spring Bean",
+        "description": "Provides functionality related to signing in, changing passwords, etc."
+      }
+    },
+    {
+      "id": "mainframe-facade",
+      "type": "c4Node",
+      "parentId": "api-boundary",
+      "extent": "parent",
+      "position": { "x": 340, "y": 220 },
+      "data": {
+        "kind": "component",
+        "name": "Mainframe Banking System Facade",
+        "technology": "Spring Bean",
+        "description": "A facade onto the mainframe banking system, hiding integration details."
+      }
+    },
+    {
+      "id": "spa",
+      "type": "c4Node",
+      "position": { "x": 20, "y": 470 },
+      "data": {
+        "kind": "container",
+        "name": "Single-Page Application",
+        "technology": "JavaScript, Angular",
+        "description": "Provides all of the Internet banking functionality to customers via their web browser."
+      }
+    },
+    {
+      "id": "mobileapp",
+      "type": "c4Node",
+      "position": { "x": 280, "y": 470 },
+      "data": {
+        "kind": "container",
+        "name": "Mobile App",
+        "technology": "C#, Xamarin",
+        "description": "Provides a limited subset of the Internet banking functionality via mobile device."
+      }
+    },
+    {
+      "id": "database",
+      "type": "c4Node",
+      "position": { "x": 540, "y": 470 },
+      "data": {
+        "kind": "containerDb",
+        "name": "Database",
+        "technology": "SQL Database",
+        "description": "Stores user registration information, hashed authentication credentials, access logs, etc."
+      }
+    },
+    {
+      "id": "mainframe",
+      "type": "c4Node",
+      "position": { "x": 800, "y": 470 },
+      "data": {
+        "kind": "systemExternal",
+        "name": "Mainframe Banking System",
+        "technology": null,
+        "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e-spa-signin", "source": "spa", "target": "signin", "type": "c4Edge", "label": "Uses", "data": { "technology": "JSON/HTTPS" } },
+    { "id": "e-spa-accsum", "source": "spa", "target": "accountssummary", "type": "c4Edge", "label": "Uses", "data": { "technology": "JSON/HTTPS" } },
+    { "id": "e-mobile-signin", "source": "mobileapp", "target": "signin", "type": "c4Edge", "label": "Uses", "data": { "technology": "JSON/HTTPS" } },
+    { "id": "e-mobile-accsum", "source": "mobileapp", "target": "accountssummary", "type": "c4Edge", "label": "Uses", "data": { "technology": "JSON/HTTPS" } },
+    { "id": "e-signin-security", "source": "signin", "target": "security", "type": "c4Edge", "label": "Uses", "data": { "technology": null } },
+    { "id": "e-accsum-facade", "source": "accountssummary", "target": "mainframe-facade", "type": "c4Edge", "label": "Uses", "data": { "technology": null } },
+    { "id": "e-security-db", "source": "security", "target": "database", "type": "c4Edge", "label": "Reads from and writes to", "data": { "technology": "JDBC" } },
+    { "id": "e-facade-mainframe", "source": "mainframe-facade", "target": "mainframe", "type": "c4Edge", "label": "Uses", "data": { "technology": "XML/HTTPS" } }
+  ]
+}
