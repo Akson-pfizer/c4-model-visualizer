@@ -1,7 +1,7 @@
 <script>
   import { LAYERS } from '../diagramData.js';
 
-  let { value, onChange } = $props();
+  let { value, onChange, idPrefix = 'layer', disabled = false } = $props();
 
   let open = $state(false);
   let activeIndex = $state(0);
@@ -10,7 +10,14 @@
 
   let current = $derived(LAYERS.find((l) => l.id === value) ?? LAYERS[0]);
 
+  $effect(() => {
+    if (disabled && open) {
+      open = false;
+    }
+  });
+
   function openList() {
+    if (disabled) return;
     activeIndex = LAYERS.findIndex((l) => l.id === value);
     if (activeIndex < 0) activeIndex = 0;
     open = true;
@@ -22,11 +29,13 @@
   }
 
   function selectLayer(layer) {
+    if (disabled) return;
     onChange(layer.id);
     closeList();
   }
 
   function onButtonClick() {
+    if (disabled) return;
     if (open) {
       closeList();
     } else {
@@ -35,6 +44,7 @@
   }
 
   function onButtonKeydown(event) {
+    if (disabled) return;
     if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key) && !open) {
       event.preventDefault();
       openList();
@@ -88,8 +98,11 @@
     role="combobox"
     aria-haspopup="listbox"
     aria-expanded={open}
-    aria-controls="layer-listbox"
-    aria-activedescendant={open ? `layer-option-${LAYERS[activeIndex].id}` : undefined}
+    aria-disabled={disabled}
+    {disabled}
+    title={disabled ? 'Layer selection is disabled in Tree view' : undefined}
+    aria-controls="{idPrefix}-listbox"
+    aria-activedescendant={open ? `${idPrefix}-option-${LAYERS[activeIndex].id}` : undefined}
     onclick={onButtonClick}
     onkeydown={onButtonKeydown}
   >
@@ -102,7 +115,7 @@
 
   {#if open}
     <ul
-      id="layer-listbox"
+      id="{idPrefix}-listbox"
       role="listbox"
       bind:this={listEl}
       class="layer-select__list"
@@ -112,7 +125,7 @@
         <!-- aria-activedescendant pattern: options are never individually focused,
              all keyboard handling lives on the combobox button above -->
         <li
-          id={`layer-option-${layer.id}`}
+          id={`${idPrefix}-option-${layer.id}`}
           role="option"
           aria-selected={layer.id === value}
           class="layer-select__option"
@@ -150,8 +163,15 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
-  .layer-select__button:hover {
+  .layer-select__button:hover:not(:disabled) {
     border-color: var(--accent);
+  }
+
+  .layer-select__button:disabled {
+    opacity: 0.52;
+    cursor: not-allowed;
+    background: var(--surface-muted);
+    box-shadow: none;
   }
 
   .layer-select__eyebrow {
@@ -185,7 +205,7 @@
   .layer-select__list {
     position: absolute;
     top: calc(100% + 8px);
-    left: 0;
+    right: 0;
     min-width: 230px;
     list-style: none;
     margin: 0;
@@ -194,7 +214,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: var(--shadow-lg);
-    z-index: 20;
+    z-index: 30;
   }
 
   .layer-select__option {

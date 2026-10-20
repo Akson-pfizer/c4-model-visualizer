@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    actor User as Architect
+    participant FE as Frontend (SourceBar / App)
+    participant Mgr as ManagerAgent (c4-manager)
+    participant Sup as SupervisorAgent (c4-supervisor)
+    participant Ctx as ContextSubagent
+    participant Cnt as ContainerSubagent
+    participant Cmp as ComponentSubagent
+    participant Cod as CodeSubagent
+
+    User->>FE: Enter source & select Local/Github, click Analyze
+    FE->>FE: Show 'pfizer' spinning-'z' loader
+    FE->>Mgr: POST /api/c4/model {source, source_type}
+    Mgr->>Mgr: Resolve local path or shallow clone GitHub repo
+    Mgr->>Sup: coordinate(RepoInventory)
+    Sup->>Ctx: run(inventory, parent_nodes=[])
+    Ctx-->>Sup: Context LayerResponse (Systems, Actors)
+    Sup->>Cnt: run(inventory, parent_nodes=Context.nodes)
+    Cnt-->>Sup: Container LayerResponse (parentNodeId -> Context)
+    Sup->>Cmp: run(inventory, parent_nodes=Container.nodes)
+    Cmp-->>Sup: Component LayerResponse (parentNodeId -> Container)
+    Sup->>Cod: run(inventory, parent_nodes=Component.nodes)
+    Cod-->>Sup: Code LayerResponse (parentNodeId -> Component)
+    Sup->>Sup: build_hierarchy_tree(layers)
+    Sup-->>Mgr: layers + 4-tier hierarchy + AgentReports
+    Mgr-->>FE: HierarchyModelResponse (HTTP 200)
+    FE->>FE: Hide loader & render Layer or HierarchyTreeCanvas

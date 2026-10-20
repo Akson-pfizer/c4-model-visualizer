@@ -29,6 +29,7 @@
         "kind": "container",
         "name": "Web Application",
         "technology": "Java, Spring MVC",
+        "parentNodeId": "ibs",
         "description": "Delivers the static content and the Internet banking single-page application."
       }
     },
@@ -42,6 +43,7 @@
         "kind": "container",
         "name": "Single-Page Application",
         "technology": "JavaScript, Angular",
+        "parentNodeId": "ibs",
         "description": "Provides all of the Internet banking functionality to customers via their web browser."
       }
     },
@@ -55,6 +57,7 @@
         "kind": "container",
         "name": "Mobile App",
         "technology": "C#, Xamarin",
+        "parentNodeId": "ibs",
         "description": "Provides a limited subset of the Internet banking functionality to customers via their mobile device."
       }
     },
@@ -68,6 +71,7 @@
         "kind": "containerDb",
         "name": "Database",
         "technology": "SQL Database",
+        "parentNodeId": "ibs",
         "description": "Stores user registration information, hashed authentication credentials, access logs, etc."
       }
     },
@@ -81,6 +85,7 @@
         "kind": "container",
         "name": "API Application",
         "technology": "Java, Docker Container",
+        "parentNodeId": "ibs",
         "description": "Provides Internet banking functionality via a JSON/HTTPS API."
       }
     },
@@ -92,6 +97,7 @@
         "kind": "person",
         "name": "Customer",
         "technology": null,
+        "parentNodeId": "customer",
         "description": "A customer of the bank, with personal bank accounts."
       }
     },
@@ -103,6 +109,7 @@
         "kind": "systemExternal",
         "name": "E-Mail System",
         "technology": null,
+        "parentNodeId": "email-system",
         "description": "The internal Microsoft Exchange e-mail system."
       }
     },
@@ -114,6 +121,7 @@
         "kind": "systemExternal",
         "name": "Mainframe Banking System",
         "technology": null,
+        "parentNodeId": "mainframe",
         "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
       }
     }

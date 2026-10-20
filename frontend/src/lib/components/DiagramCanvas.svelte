@@ -3,12 +3,12 @@
   import '@xyflow/svelte/dist/style.css';
   import FlowInner from './FlowInner.svelte';
 
-  let { layer, onNodeSelect } = $props();
+  let { layer, onNodeSelect, loadGeneration, onReady } = $props();
 </script>
 
 <div class="canvas">
   <SvelteFlowProvider>
-    <FlowInner {layer} {onNodeSelect} />
+    <FlowInner {layer} {onNodeSelect} {loadGeneration} {onReady} />
   </SvelteFlowProvider>
 </div>
 

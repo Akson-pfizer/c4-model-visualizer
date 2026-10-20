@@ -29,6 +29,7 @@
         "kind": "component",
         "name": "Sign In Controller",
         "technology": "Spring MVC Rest Controller",
+        "parentNodeId": "apiapp",
         "description": "Allows users to sign in to the Internet banking system."
       }
     },
@@ -42,6 +43,7 @@
         "kind": "component",
         "name": "Accounts Summary Controller",
         "technology": "Spring MVC Rest Controller",
+        "parentNodeId": "apiapp",
         "description": "Provides customers with a summary of their bank accounts."
       }
     },
@@ -55,6 +57,7 @@
         "kind": "component",
         "name": "Security Component",
         "technology": "Spring Bean",
+        "parentNodeId": "apiapp",
         "description": "Provides functionality related to signing in, changing passwords, etc."
       }
     },
@@ -68,6 +71,7 @@
         "kind": "component",
         "name": "Mainframe Banking System Facade",
         "technology": "Spring Bean",
+        "parentNodeId": "apiapp",
         "description": "A facade onto the mainframe banking system, hiding integration details."
       }
     },
@@ -79,6 +83,7 @@
         "kind": "container",
         "name": "Single-Page Application",
         "technology": "JavaScript, Angular",
+        "parentNodeId": "spa",
         "description": "Provides all of the Internet banking functionality to customers via their web browser."
       }
     },
@@ -90,6 +95,7 @@
         "kind": "container",
         "name": "Mobile App",
         "technology": "C#, Xamarin",
+        "parentNodeId": "mobileapp",
         "description": "Provides a limited subset of the Internet banking functionality via mobile device."
       }
     },
@@ -101,6 +107,7 @@
         "kind": "containerDb",
         "name": "Database",
         "technology": "SQL Database",
+        "parentNodeId": "database",
         "description": "Stores user registration information, hashed authentication credentials, access logs, etc."
       }
     },
@@ -112,6 +119,7 @@
         "kind": "systemExternal",
         "name": "Mainframe Banking System",
         "technology": null,
+        "parentNodeId": "mainframe",
         "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
       }
     }

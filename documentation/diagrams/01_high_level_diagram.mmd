@@ -1,0 +1,31 @@
+flowchart LR
+    User(["Architect / Developer"])
+    subgraph FE["Frontend SPA (Svelte 5 + SvelteFlow)"]
+        Vis["Visualizer Tab<br/>(Layer & 4-Tier Tree)"]
+        Dev["Developer Tab<br/>(Interactive C4 Builder)"]
+        Src["SourceBar<br/>(Local | Github)"]
+    end
+    subgraph BE["FastAPI Multi-Agent Backend (:8000)"]
+        Mgr["ManagerAgent<br/>(c4-manager)"]
+        Sup["SupervisorAgent<br/>(c4-supervisor)"]
+        Subs["4 Layer Subagents<br/>(Context/Container/Component/Code)"]
+        Doc["DocumentationAgent<br/>(c4-doc-agent)"]
+        Skills["Shared Skills Registry<br/>(7 Reusable Skills)"]
+    end
+    subgraph Ext["External Systems"]
+        LMS["LM Studio Server<br/>(OpenAI API :1234)"]
+        GH["GitHub / Local FS<br/>(Source Repos)"]
+        Conf["Confluence Pages<br/>(MMD / SVG / PNG)"]
+    end
+
+    User -->|Interacts| FE
+    Src -->|POST /api/c4/model| Mgr
+    Mgr -->|Clones / Scans| GH
+    Mgr -->|Delegates| Sup
+    Sup -->|Orchestrates| Subs
+    Subs -->|JSON Inference / Fallback| LMS
+    Mgr -.->|Uses| Skills
+    Sup -.->|Uses| Skills
+    Subs -.->|Uses| Skills
+    Doc -.->|Uses| Skills
+    Doc -->|Exports Docs & PNGs| Conf

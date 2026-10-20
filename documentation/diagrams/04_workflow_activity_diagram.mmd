@@ -1,0 +1,20 @@
+flowchart TD
+    Start(["Start: Source Input"]) --> Validate{"Matches Selected<br/>Source Type?"}
+    Validate -- "No" --> Reject["Return HTTP 400 Validation Error"]
+    Validate -- "Yes (Github)" --> Clone["Shallow git clone --depth 1 to TempDir"]
+    Validate -- "Yes (Local)" --> Resolve["Resolve Local Filesystem Path"]
+    Clone --> Scan["Scan Source Tree & Build Bounded Context"]
+    Resolve --> Scan
+    Scan --> CheckLLM{"LM Studio Reachable<br/>& use_llm=true?"}
+    CheckLLM -- "Yes" --> PromptLLM["Prompt Specialist Subagent (Strict JSON)"]
+    PromptLLM --> SchemaOK{"Pydantic Schema &<br/>Edge IDs Valid?"}
+    SchemaOK -- "No (Retry 1x)" --> Repair["Send build_repair_prompt() to LLM"]
+    Repair --> SchemaOK2{"Repair Succeeded?"}
+    SchemaOK2 -- "No" --> Fallback["Deterministic AST & Directory Analyzer"]
+    CheckLLM -- "No" --> Fallback
+    SchemaOK -- "Yes" --> LinkParents["Enforce parentNodeId Across C4 Layers"]
+    SchemaOK2 -- "Yes" --> LinkParents
+    Fallback --> LinkParents
+    LinkParents --> BuildTree["Construct 4-Tier HierarchyTreeNode Forest"]
+    BuildTree --> Sandbox["Run Sandbox & Self-Review Discrepancy Gate"]
+    Sandbox --> Finish(["Return Verified Model & Confluence Docs"])

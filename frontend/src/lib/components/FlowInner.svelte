@@ -16,7 +16,7 @@
   import C4Edge from './edges/C4Edge.svelte';
   import Legend from './Legend.svelte';
 
-  let { layer, onNodeSelect } = $props();
+  let { layer, onNodeSelect, loadGeneration, onReady } = $props();
 
   const nodeTypes = { c4Node: C4Node, c4Boundary: C4Boundary };
   const edgeTypes = { c4Edge: C4Edge };
@@ -37,6 +37,7 @@
   function handleInit() {
     requestAnimationFrame(() => {
       fitView({ padding: 0.2, duration: 200 });
+      onReady?.(loadGeneration);
     });
   }
 

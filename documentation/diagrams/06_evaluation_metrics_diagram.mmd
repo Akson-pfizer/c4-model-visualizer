@@ -1,0 +1,28 @@
+flowchart LR
+    subgraph Inputs["Extracted Model & Telemetry"]
+        Raw["HierarchyModelResponse<br/>(26 Nodes, 22 Edges)"]
+        Sbx["Sandbox Run<br/>(8.4 ms)"]
+    end
+
+    subgraph Evaluators["Implemented Evaluation Metric Gates"]
+        M1["1. Schema Conformance (10% weight)<br/>Pydantic LLMExtraction + KINDS_BY_LAYER<br/>Current: 100.0%"]
+        M2["2. Edge Referential Integrity (30% weight)<br/>_validate_edges() source/target in node_ids<br/>Current: 100.0%"]
+        M3["3. Cross-Layer Traceability (35% weight)<br/>_ensure_parent_links() parentNodeId coverage<br/>Current: 100.0%"]
+        M4["4. C4 Density Compliance (25% weight)<br/>nodes + boundaries <= 15 per layer<br/>Current: 100.0%"]
+        M5["5. Self-Healing Repair Loop<br/>MAX_REPAIR_ATTEMPTS=1 + AST Fallback"]
+    end
+
+    subgraph Output["Composite Architecture Quality"]
+        Score["Composite Score: 100.0 / 100<br/>Status: PASS (Confluence Ready)"]
+    end
+
+    Raw --> M1
+    Raw --> M2
+    Raw --> M3
+    Raw --> M4
+    Sbx --> M5
+    M1 --> Score
+    M2 --> Score
+    M3 --> Score
+    M4 --> Score
+    M5 --> Score

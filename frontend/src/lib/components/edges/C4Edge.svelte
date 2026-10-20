@@ -11,6 +11,7 @@
     targetPosition,
     label,
     data,
+    markerStart,
     markerEnd
   } = $props();
 
@@ -25,9 +26,14 @@
       borderRadius: 8
     })
   );
+  let strokeStyle = $derived(
+    data?.style === 'dashed'
+      ? 'stroke: var(--border-strong); stroke-width: 1.5; stroke-dasharray: 5 4;'
+      : 'stroke: var(--border-strong); stroke-width: 1.5;'
+  );
 </script>
 
-<BaseEdge {id} {path} style="stroke: var(--border-strong); stroke-width: 1.5;" {markerEnd} />
+<BaseEdge {id} {path} style={strokeStyle} {markerStart} {markerEnd} />
 
 {#if label}
   <EdgeLabel x={labelX} y={labelY}>

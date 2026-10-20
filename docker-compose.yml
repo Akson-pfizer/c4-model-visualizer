@@ -1,8 +1,25 @@
 services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      - LM_STUDIO_API_KEY=${LM_STUDIO_API_KEY:-lm-studio}
+      - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-prism-ml/bonsai-27b}
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "8080:80"
+    depends_on:
+      - backend
     restart: unless-stopped

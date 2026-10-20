@@ -1,9 +1,3 @@
-<script>
-  import LayerSelect from './LayerSelect.svelte';
-
-  let { layer, onChange } = $props();
-</script>
-
 <header class="app-header">
   <div class="app-header__brand">
     <svg class="app-header__mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -14,13 +8,9 @@
       <rect x="18" y="18" width="9" height="9" rx="2" fill="#60A5FA" />
     </svg>
     <div class="app-header__title">
-      <span class="app-header__title-main">C4 Model Visualiser</span>
-      <span class="app-header__title-sub">Context · Container · Component · Code</span>
+      <span class="app-header__title-main">C4 modelling</span>
+      <span class="app-header__title-sub">“Design is the silent ambassador of thought; code is merely its echo.”</span>
     </div>
-  </div>
-
-  <div class="app-header__center">
-    <LayerSelect value={layer} onChange={onChange} />
   </div>
 
   <div class="app-header__brand app-header__brand--right">
@@ -76,12 +66,9 @@
   }
 
   .app-header__title-sub {
-    font-size: 10.5px;
-    color: var(--text-faint);
-  }
-
-  .app-header__center {
-    flex-shrink: 0;
+    font-size: 11.5px;
+    font-style: italic;
+    color: var(--text-muted);
   }
 
   .pfizer-mark {

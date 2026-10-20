@@ -1,0 +1,25 @@
+flowchart LR
+    subgraph ClientHost["Client Workstation"]
+        Browser["Web Browser<br/>http://localhost:8080 (Docker)<br/>http://localhost:5173 (Vite Dev)"]
+    end
+
+    subgraph DockerNet["Docker Compose Network (c4-model-visualizer)"]
+        subgraph FECont["frontend Service (nginx:1.27-alpine)"]
+            Nginx["Nginx Reverse Proxy (:80)<br/>Static SPA + /api/ Proxy"]
+        end
+        subgraph BECont["backend Service (python:3.12-slim + git)"]
+            Uvicorn["Uvicorn + FastAPI (:8000)<br/>Multi-Agent Engine + Skills"]
+            TmpGit["Ephemeral Git Clone Volume<br/>(/tmp/c4-repo-*)"]
+        end
+    end
+
+    subgraph HostOS["Host Machine / External"]
+        LMStudio["LM Studio Local Server<br/>host.docker.internal:1234/v1"]
+        GitHubCloud["GitHub.com<br/>HTTPS Git Remotes"]
+    end
+
+    Browser -->|HTTP :8080| Nginx
+    Nginx -->|proxy_pass http://backend:8000/api/| Uvicorn
+    Uvicorn -->|Reads / Clones| TmpGit
+    Uvicorn -->|OpenAI SDK HTTP| LMStudio
+    Uvicorn -->|git clone --depth 1| GitHubCloud

@@ -19,6 +19,7 @@
         "kind": "codeClass",
         "name": "SecurityServiceImpl",
         "technology": "class",
+        "parentNodeId": "security",
         "description": "Default implementation of SecurityService."
       }
     },
@@ -30,6 +31,7 @@
         "kind": "codeInterface",
         "name": "SecurityService",
         "technology": "interface",
+        "parentNodeId": "security",
         "description": "Sign-in, password change, and session operations."
       }
     },
@@ -41,6 +43,7 @@
         "kind": "codeClass",
         "name": "UserRepository",
         "technology": "class, JDBC",
+        "parentNodeId": "security",
         "description": "Data access for User records."
       }
     },
@@ -52,6 +55,7 @@
         "kind": "codeClass",
         "name": "User",
         "technology": "class, entity",
+        "parentNodeId": "security",
         "description": "A registered Internet banking user."
       }
     },
@@ -63,6 +67,7 @@
         "kind": "codeEnum",
         "name": "Role",
         "technology": "enum",
+        "parentNodeId": "security",
         "description": "Authorisation role assigned to a user."
       }
     }

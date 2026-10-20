@@ -1,0 +1,47 @@
+erDiagram
+    HIERARCHY_MODEL_RESPONSE ||--|{ LAYER_RESPONSE : "contains 4 layers"
+    HIERARCHY_MODEL_RESPONSE ||--|{ HIERARCHY_TREE_NODE : "roots at context"
+    HIERARCHY_MODEL_RESPONSE ||--|{ AGENT_REPORT : "records telemetry"
+    LAYER_RESPONSE ||--o{ BOUNDARY : "groups nodes"
+    LAYER_RESPONSE ||--|{ C4_NODE : "renders elements"
+    LAYER_RESPONSE ||--o{ C4_EDGE : "connects nodes"
+    LAYER_RESPONSE ||--|{ LEGEND_ITEM : "summarizes kinds"
+    C4_NODE ||--|| NODE_DATA : "embeds metadata"
+    C4_NODE }o--o| BOUNDARY : "parentId"
+    NODE_DATA }o--o| C4_NODE : "parentNodeId (cross-layer)"
+    HIERARCHY_TREE_NODE }o--o{ HIERARCHY_TREE_NODE : "children (4 tiers)"
+
+    HIERARCHY_MODEL_RESPONSE {
+        string source
+        string source_type
+        string repo_name
+    }
+    LAYER_RESPONSE {
+        string layer
+        string title
+        string subtitle
+    }
+    C4_NODE {
+        string id PK
+        string parentId FK
+        float pos_x
+        float pos_y
+    }
+    NODE_DATA {
+        string kind
+        string name
+        string technology
+        string parentNodeId FK
+    }
+    C4_EDGE {
+        string id PK
+        string source FK
+        string target FK
+        string label
+    }
+    HIERARCHY_TREE_NODE {
+        string id PK
+        string layer
+        string kind
+        string parentNodeId FK
+    }

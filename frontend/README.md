@@ -1,149 +1,153 @@
-# C4 Model Visualiser
+# C4 Modelling — Frontend (`c4-model-visualizer/frontend`)
 
-A read-only demo UI for navigating the four layers of the [C4 model](https://c4model.com)
-— System Context, Container, Component, and Code — as interactive node/edge
-diagrams, built with Svelte 5 and [Svelte Flow](https://svelteflow.dev).
+> *“Design is the silent ambassador of thought; code is merely its echo.”*
 
-## The idea
+The **C4 Modelling** frontend is an interactive Svelte 5 + Vite single-page application powered by [`@xyflow/svelte`](https://svelteflow.dev/) for exploring, designing, and validating hierarchical [C4 software architecture models](https://c4model.com/) across all four C4 layers (**Context**, **Container**, **Component**, and **Code**) plus a cross-layer **Hierarchy Tree** view.
 
-The [C4 model](https://c4model.com) describes software architecture at four
-zoom levels, each for a different audience:
+---
 
-| Layer | Shows | Audience |
-|---|---|---|
-| **Context** | The system and the people/external systems it talks to | Everyone, non-technical included |
-| **Container** | The applications and data stores inside the system | Architects, tech leads |
-| **Component** | The internal building blocks of one container | Developers working on that container |
-| **Code** | Classes/interfaces inside one component | The developer currently in that code (and per C4 guidance, this level shouldn't really be hand-drawn — see the in-app note) |
+## Key Capabilities
 
-This app lets you switch between those four layers from one dropdown and see
-each one rendered as a proper diagram — typed boxes, labelled relationships,
-boundary frames, a legend — rather than a static picture. All four layers zoom
-into the *same* worked example (the canonical "Internet Banking System" from
-c4model.com/Structurizr), so Context → Container → Component → Code actually
-drill into each other instead of being four unrelated screenshots.
+1. **Dual Workspace Modes (`Visualizer` & `Developer`)**:
+   - **Visualizer Tab**: Inspect any local repository or remote GitHub repository across the 4 C4 layers (`Context`, `Container`, `Component`, `Code`) or switch to the **Tree** view (`HierarchyTreeCanvas.svelte`) to see how Context systems decompose into Containers, Components, and Code classes/interfaces.
+   - **Developer Tab (`BuildRepo.svelte`)**: Interactive drag-and-drop C4 architecture studio with a **C4 Shape Library**, **System Boundary** grouping, inline Inspector, **Layer selector** (`Context` / `Container` / `Component` / `Code`), **Layer | Tree** view switcher, and live **Implementation Plan** synthesis.
+2. **Three-Section Source Bar (`SourceBar.svelte`)**:
+   - **Section 1 (`1 · Source Path`)**: Input field for a local directory path or GitHub repository URL (`https://github.com/owner/repo`) with real-time validation messages underneath.
+   - **Section 2 (`2 · Source Type`)**: Dropdown (`Local` | `Github`) that validates path/URL format against the chosen source mode.
+   - **Section 3 (`3 · Actions`)**: **Analyze** button (triggers the multi-agent backend pipeline) and **Reset Demo** button.
+3. **Animated `pfizer` Word Loader (`PfizerLoader.svelte`)**:
+   - Displays the lowercase **`pfizer`** wordmark with the letter **`z`** continuously spinning $360^\circ$ around its vertical axis (`rotateY(0deg -> 360deg)`) while repository analysis or layer transitions are in progress.
+4. **4-Tier Hierarchy Tree Canvas (`HierarchyTreeCanvas.svelte`)**:
+   - Visualizes parent-child traceability (`parentNodeId`) from **Level 1 · Context** $\rightarrow$ **Level 2 · Container** $\rightarrow$ **Level 3 · Component** $\rightarrow$ **Level 4 · Code**.
+   - Automatically disables the C4 Layer dropdown when **Tree** view is active (`disabled={viewMode === 'tree'}`).
 
-It's a frontend-only visualiser: the diagram data is static demo JSON rather
-than coming from a live backend, but it's shaped exactly like an API response
-would be — see [Implementation](#implementation) below — so wiring up a real
-backend later is a small change, not a rewrite.
+---
 
-## What you'll see
+## Frontend Architecture & Implementation Flow (Mermaid)
 
-- **Header**: a "C4 Model Visualiser" mark top-left, the layer-select dropdown
-  in the middle, a Pfizer wordmark top-right (placeholder — see note below).
-- **Dropdown**: click it (or Tab to it and press Enter) to pick a layer. Full
-  keyboard support — arrow keys to move, Enter to select, Escape to close.
-- **Canvas**: the selected layer's diagram, pannable/zoomable, with a legend,
-  minimap, and zoom controls.
-- **Side panel**: click any box on the canvas to see its full description,
-  technology, and type. Click elsewhere (or the ✕) to clear the selection.
-- Switching layers crossfades out the old diagram and fades in the new one.
+### 1. Component & State Flow
 
-> **Note on the Pfizer mark**: it's a placeholder text wordmark, not the real
-> Pfizer logo asset — no official logo image was available to embed, and
-> reproducing a trademarked logo programmatically isn't appropriate. Swap
-> `.pfizer-mark` in `src/lib/components/AppHeader.svelte` for the real asset
-> before this is shown to anyone outside this exercise.
+```mermaid
+flowchart TB
+    subgraph UI["C4 Modelling Frontend (Svelte 5 + Vite)"]
+        Header["AppHeader.svelte<br/>Brand + Mode Switcher (Visualizer | Developer)"]
+        SourceBar["SourceBar.svelte<br/>1. Source Path | 2. Source Type (Local/Github) | 3. Actions"]
+        Loader["PfizerLoader.svelte<br/>Animated 'pfizer' Wordmark (Spinning 'z')"]
 
-## Implementation
+        subgraph VisualizerMode["Visualizer Tab (App.svelte)"]
+            VisTopBar["Canvas Top Bar<br/>View Toggle (Layer | Tree) + LayerSelect"]
+            FlowCanvas["SvelteFlow Canvas<br/>C4Node + BoundaryNode + C4Edge"]
+            TreeCanvas["HierarchyTreeCanvas.svelte<br/>4-Tier SVG/Card Tree (Context -> Container -> Component -> Code)"]
+            DetailPanel["DetailPanel + LegendBar + LayerInfoCard"]
+        end
 
-**Stack**: Svelte 5 (runes) + Vite, [@xyflow/svelte](https://svelteflow.dev)
-for the diagrams, plain CSS custom properties for the soft white/blue theme.
-No SvelteKit — this is a single-page app with four view-states, not a
-multi-route site.
+        subgraph DeveloperMode["Developer Tab (BuildRepo.svelte)"]
+            Palette["Shape Library Palette<br/>C4 Elements + Boundary Tool"]
+            DevTopBar["Canvas Toolbar<br/>View Toggle (Layer | Tree) + LayerSelect + Plan Button"]
+            BuildCanvas["BuildCanvas.svelte<br/>Interactive Drag/Connect/Resize Canvas"]
+            Inspector["Right Dock<br/>Element Inspector & Implementation Plan"]
+        end
+    end
 
-```
-src/
-├── App.svelte               # layer state + crossfade transition
-├── app.css                  # theme tokens (soft white / blue palette)
-└── lib/
-    ├── diagramData.js       # adapts data/*.json → Svelte Flow's node/edge shape
-    ├── c4Kinds.js           # visual metadata (colour, shape, stereotype) per element kind
-    ├── data/
-    │   ├── context.json     # one JSON file per C4 layer — see schema below
-    │   ├── container.json
-    │   ├── component.json
-    │   └── code.json
-    └── components/
-        ├── AppHeader.svelte     # brand mark · layer dropdown · Pfizer mark
-        ├── LayerSelect.svelte   # accessible combobox-style dropdown
-        ├── DiagramCanvas.svelte # wraps SvelteFlowProvider
-        ├── FlowInner.svelte     # the actual <SvelteFlow> diagram
-        ├── DetailPanel.svelte   # layer / selected-node description
-        ├── Legend.svelte
-        ├── nodes/{C4Node,C4Boundary}.svelte
-        └── edges/C4Edge.svelte
+    DataStore["diagramData.js<br/>Static Demo JSON + Live Backend Model Store"]
+    BackendAPI["FastAPI Multi-Agent Backend<br/>POST /api/c4/model"]
+
+    Header --> VisualizerMode
+    Header --> DeveloperMode
+    SourceBar -->|Analyze (source, sourceType)| BackendAPI
+    BackendAPI -->|HierarchyModelResponse| DataStore
+    DataStore --> FlowCanvas
+    DataStore --> TreeCanvas
+    DataStore --> BuildCanvas
+    VisTopBar --> FlowCanvas
+    VisTopBar --> TreeCanvas
+    DevTopBar --> BuildCanvas
 ```
 
-### Data shape
+### 2. User Interaction & Multi-Agent Request Sequence
 
-Each `data/*.json` file is shaped like what a real backend endpoint
-(`GET /api/c4/{layer}`) should return:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Architect / Developer
+    participant SB as SourceBar.svelte
+    participant App as App.svelte / BuildRepo.svelte
+    participant PL as PfizerLoader.svelte
+    participant Store as diagramData.js
+    participant API as Backend (/api/c4/model)
 
-```jsonc
-{
-  "layer": "container",
-  "title": "Container",
-  "description": "...",           // shown in the side panel by default
-  "note": null,                   // optional callout, e.g. Code layer's "don't hand-model this"
-  "legend": [{ "kind": "container", "label": "Container" }, ...],
-  "boundaries": [                 // optional System/Container frames
-    { "id": "ibs-boundary", "label": "Internet Banking System",
-      "position": { "x": 260, "y": 40 }, "size": { "width": 820, "height": 400 } }
-  ],
-  "nodes": [
-    { "id": "apiapp", "type": "c4Node", "position": { "x": 300, "y": 220 },
-      "parentId": "ibs-boundary", "extent": "parent",
-      "data": { "kind": "container", "name": "API Application",
-                "technology": "Java, Docker Container", "description": "..." } }
-  ],
-  "edges": [
-    { "id": "e-api-db", "source": "apiapp", "target": "database", "type": "c4Edge",
-      "label": "Reads from and writes to", "data": { "technology": "JDBC" } }
-  ]
-}
+    User->>SB: Select Source Type (Local | Github) & Enter Path/URL
+    SB->>SB: Validate input matches Local path or GitHub URL
+    User->>SB: Click "Analyze"
+    SB->>App: onAnalyze(source, sourceType)
+    App->>PL: Show "pfizer" spinning-'z' loader overlay
+    App->>Store: fetchRepositoryModel(source, sourceType)
+    Store->>API: POST /api/c4/model {source, source_type, use_llm}
+    API-->>Store: HierarchyModelResponse {layers, hierarchy, agents}
+    Store-->>App: Update active layers & 4-tier hierarchy tree
+    App->>PL: Hide loader overlay
+    User->>App: Switch Layer (Context/Container/Component/Code) or View (Layer | Tree)
+    App->>App: Render SvelteFlow Layer or HierarchyTreeCanvas
 ```
 
-`diagramData.js` is the one place that adapts this into Svelte Flow's shape
-(turning `boundaries[]` into actual nodes, etc.) — pointing its imports at a
-`fetch()` call instead of static JSON is the only change a real backend
-integration needs.
+---
 
-For the full design rationale (why a combobox instead of `<select>`, why the
-side panel instead of inline canvas text, the research this traces back to,
-and some implementation gotchas worth knowing about) see
-[`claude_output/frontend_implementation.md`](../claude_output/frontend_implementation.md)
-at the project root.
+## Project Structure
 
-## How to run
+```text
+c4-model-visualizer/frontend/
+├── Dockerfile                  # Multi-stage Node 22 build -> Nginx 1.27 Alpine runtime
+├── nginx.conf                  # SPA routing + /api/ reverse proxy to backend:8000
+├── package.json                # Svelte 5, Vite 6, @xyflow/svelte
+├── vite.config.js              # Dev server (:5173) with /api proxy to 127.0.0.1:8000
+└── src/
+    ├── App.svelte              # Root shell, Visualizer canvas, SourceBar & loader orchestration
+    ├── app.css                 # Global styling and C4 theme tokens
+    └── lib/
+        ├── diagramData.js      # Reactive C4 layer store, hierarchy tree builder & API client
+        ├── buildCatalog.js     # Developer palette catalog & C4 connection validation rules
+        ├── data/               # Default static C4 JSON layers (context, container, component, code)
+        └── components/
+            ├── AppHeader.svelte            # C4 modelling header, philosophical quote & tab bar
+            ├── SourceBar.svelte            # 3-section source bar (Path, Local/Github Type, Actions)
+            ├── LayerSelect.svelte          # C4 layer dropdown (disabled in Tree view)
+            ├── HierarchyTreeCanvas.svelte  # 4-tier Context -> Container -> Component -> Code tree
+            ├── PfizerLoader.svelte         # Lowercase "pfizer" loader with 3D spinning "z"
+            ├── DetailPanel.svelte          # Selected node/edge inspection drawer
+            ├── LayerInfoCard.svelte        # C4 layer guidance & agent summary badge
+            ├── LegendBar.svelte            # C4 element color/kind legend
+            ├── nodes/
+            │   ├── C4Node.svelte           # Custom C4 node renderer
+            │   └── BoundaryNode.svelte     # Dashed C4 boundary container node
+            ├── edges/
+            │   └── C4Edge.svelte           # Custom labeled technology edge
+            └── build/
+                ├── BuildRepo.svelte        # Developer mode workspace & implementation plan generator
+                ├── BuildCanvas.svelte      # Interactive drag/drop & resize SvelteFlow canvas
+                ├── ShapeIcon.svelte        # SVG icons for C4 element kinds
+                └── ToastBanner.svelte      # Connection rule feedback banner
+```
 
-### Docker Compose (recommended — matches the verified production build)
+---
 
-From the **project root** (one level up from this folder):
+## Running Locally
+
+### Development Server (Vite)
 
 ```bash
-cd ..                      # into claude_bootcamp/, if you're in frontend/
-docker compose up --build
-```
-
-Open **http://localhost:8080**. Stop it with `docker compose down`.
-
-> If the build fails pulling `node:22-alpine` with an error like
-> `x509: certificate signed by unknown authority`, that's a corporate proxy
-> intercepting Docker Hub traffic that Docker Desktop doesn't trust — not a
-> problem with this app. The `Dockerfile` is already pinned to `node:20-alpine`
-> to work around this; if you still hit it, point `FROM` at whatever Node image
-> is already cached on your machine (`docker images`), or get your corporate
-> root CA added to Docker Desktop's trust store.
-
-### Dev server (hot reload, for making changes)
-
-From **this folder** (`frontend/`):
-
-```bash
+cd c4-model-visualizer/frontend
 npm install
 npm run dev
 ```
 
-Open the URL it prints (typically http://localhost:5173).
+Open `http://127.0.0.1:5173/`. Requests to `/api/*` are automatically proxied to the FastAPI backend at `http://127.0.0.1:8000`.
+
+### Production Container (Docker Compose)
+
+From `c4-model-visualizer/`:
+
+```bash
+docker compose up --build
+```
+
+The frontend is served by Nginx at `http://localhost:8080` and proxies `/api/*` requests to the `backend` service on port `8000`.

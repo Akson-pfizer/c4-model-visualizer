@@ -19,6 +19,7 @@
         "kind": "person",
         "name": "Customer",
         "technology": null,
+        "parentNodeId": null,
         "description": "A customer of the bank, with personal bank accounts."
       }
     },

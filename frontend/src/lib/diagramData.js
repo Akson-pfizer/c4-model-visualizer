@@ -1,15 +1,13 @@
-// Demo data layer. Each JSON file in ./data follows the schema documented in
-// claude_output/frontend_implementation.md — the exact shape a future backend
-// endpoint (e.g. GET /api/c4/{layer}) should return. This module is the one place
-// that adapts that backend-shaped schema into Svelte Flow's node/edge shape, so
-// swapping the static imports below for a fetch() call is the only change a real
-// integration needs.
+// Adapts backend-shaped C4 layer payloads (either the default static demo JSON
+// or the live multi-agent backend response from POST /api/c4/model) into Svelte
+// Flow's node/edge shape, and builds the hierarchical tree model across
+// Context -> Container -> Component -> Code.
 import contextData from './data/context.json';
 import containerData from './data/container.json';
 import componentData from './data/component.json';
 import codeData from './data/code.json';
 
-const RAW_BY_LAYER = {
+export const DEFAULT_RAW_BY_LAYER = {
   context: contextData,
   container: containerData,
   component: componentData,
@@ -22,6 +20,8 @@ export const LAYERS = [
   { id: 'component', label: 'Component', description: 'Component' },
   { id: 'code', label: 'Code', description: 'Code' }
 ];
+
+export const LAYER_ORDER = ['context', 'container', 'component', 'code'];
 
 function boundaryToNode(boundary) {
   return {
@@ -37,17 +37,14 @@ function boundaryToNode(boundary) {
   };
 }
 
-export function getLayer(layerId) {
-  const raw = RAW_BY_LAYER[layerId];
-  if (!raw) {
-    throw new Error(`Unknown C4 layer: ${layerId}`);
-  }
-
+export function adaptRawLayer(raw) {
   const boundaryNodes = (raw.boundaries ?? []).map(boundaryToNode);
-  // Explicit width/height avoid a fitView race: Svelte Flow can only compute an
-  // accurate initial fit if every node's size is known synchronously, before the
-  // async DOM measurement (ResizeObserver) pass completes.
-  const elementNodes = raw.nodes.map((node) => ({ ...node, width: 220, height: 150, zIndex: 1 }));
+  const elementNodes = (raw.nodes ?? []).map((node) => ({
+    ...node,
+    width: 220,
+    height: 150,
+    zIndex: 1
+  }));
 
   return {
     layer: raw.layer,
@@ -55,8 +52,75 @@ export function getLayer(layerId) {
     subtitle: raw.subtitle,
     description: raw.description,
     note: raw.note ?? null,
-    legend: raw.legend,
+    legend: raw.legend ?? [],
     nodes: [...boundaryNodes, ...elementNodes],
-    edges: raw.edges
+    elementNodes,
+    edges: raw.edges ?? []
   };
+}
+
+export function getLayer(layerId, rawByLayer = DEFAULT_RAW_BY_LAYER) {
+  const raw = rawByLayer[layerId] ?? DEFAULT_RAW_BY_LAYER[layerId];
+  if (!raw) {
+    throw new Error(`Unknown C4 layer: ${layerId}`);
+  }
+  return adaptRawLayer(raw);
+}
+
+/**
+ * Builds the 4-level C4 hierarchy forest:
+ *   Context (root nodes) -> Container -> Component -> Code
+ * Each layer's nodes attach to their parent in the layer above via `data.parentNodeId`
+ * (with automatic fallback to the primary in-scope parent if not explicitly set).
+ */
+export function buildHierarchyFromLayers(rawByLayer = DEFAULT_RAW_BY_LAYER) {
+  /** @type {Record<string, Map<string, any>>} */
+  const byLayer = {};
+
+  for (const layerId of LAYER_ORDER) {
+    const raw = rawByLayer[layerId] ?? DEFAULT_RAW_BY_LAYER[layerId];
+    const map = new Map();
+    for (const node of raw?.nodes ?? []) {
+      if (node.type && node.type !== 'c4Node') continue;
+      map.set(node.id, {
+        id: node.id,
+        name: node.data.name,
+        layer: layerId,
+        kind: node.data.kind,
+        technology: node.data.technology ?? null,
+        description: node.data.description ?? '',
+        parentNodeId: node.data.parentNodeId ?? null,
+        children: []
+      });
+    }
+    byLayer[layerId] = map;
+  }
+
+  for (let i = 0; i < LAYER_ORDER.length - 1; i += 1) {
+    const parentLayerId = LAYER_ORDER[i];
+    const childLayerId = LAYER_ORDER[i + 1];
+    const parentMap = byLayer[parentLayerId];
+    const childMap = byLayer[childLayerId];
+    if (!parentMap || parentMap.size === 0) continue;
+
+    const parentList = [...parentMap.values()];
+    const fallbackParent =
+      parentList.find((p) => ['system', 'container', 'component'].includes(p.kind)) ??
+      parentList[0];
+
+    for (const child of childMap.values()) {
+      const parent =
+        (child.parentNodeId && parentMap.get(child.parentNodeId)) ||
+        parentList.find(
+          (p) => p.id === child.id || p.name.toLowerCase() === child.name.toLowerCase()
+        ) ||
+        fallbackParent;
+      if (parent) {
+        child.parentNodeId = parent.id;
+        parent.children.push(child);
+      }
+    }
+  }
+
+  return [...(byLayer.context?.values() ?? [])];
 }
