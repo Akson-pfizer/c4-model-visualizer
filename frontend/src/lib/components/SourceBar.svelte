@@ -1,4 +1,6 @@
 <script>
+  import { DEFAULT_AGENT_ROSTER, validateSource } from '../sourceValidation.js';
+
   let {
     source = '',
     analyzing = false,
@@ -21,77 +23,9 @@
     }
   });
 
-  const GITHUB_PATTERNS = [
-    /^https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\/.*)?$/,
-    /^git@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/,
-    /^github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\/.*)?$/
-  ];
-
-  const LOCAL_PATH_PATTERN =
-    /^(\/[A-Za-z0-9_.\-/ ]+|~\/[A-Za-z0-9_.\-/ ]+|\.\.?\/[A-Za-z0-9_.\-/ ]+|[A-Za-z]:\\[A-Za-z0-9_.\-\\ ]+|[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.\-/ ]*)*)$/;
-
-  function validateSource(raw, type) {
-    const val = raw.trim();
-    if (!val) {
-      return {
-        valid: false,
-        message:
-          type === 'local'
-            ? 'Enter a local directory path (e.g. /Users/.../repo or ./project).'
-            : 'Enter a GitHub repository URL (e.g. https://github.com/owner/repo).'
-      };
-    }
-
-    const looksLikeUrl =
-      /^https?:\/\//i.test(val) || /^git@/i.test(val) || /^github\.com\//i.test(val);
-
-    if (type === 'local') {
-      if (looksLikeUrl) {
-        return {
-          valid: false,
-          message:
-            'Invalid Local path: a GitHub/remote URL was entered while "Local" is selected.'
-        };
-      }
-      if (/[<>:"|?*\0]/.test(val) || !LOCAL_PATH_PATTERN.test(val)) {
-        return {
-          valid: false,
-          message:
-            'Invalid Local path format. Use a valid filesystem path such as /Users/name/repo or ./folder.'
-        };
-      }
-      return {
-        valid: true,
-        message: 'Valid local filesystem path format ✓'
-      };
-    }
-
-    // type === 'github'
-    if (val.startsWith('/') || val.startsWith('~/') || val.startsWith('./') || val.startsWith('../')) {
-      return {
-        valid: false,
-        message:
-          'Invalid Github path: a local filesystem path was entered while "Github" is selected.'
-      };
-    }
-
-    const matchesGithub = GITHUB_PATTERNS.some((re) => re.test(val));
-    if (!matchesGithub) {
-      return {
-        valid: false,
-        message:
-          'Invalid Github path. Expected https://github.com/<owner>/<repo> or git@github.com:<owner>/<repo>.git.'
-      };
-    }
-
-    return {
-      valid: true,
-      message: 'Valid GitHub repository path ✓'
-    };
-  }
-
   let validation = $derived(validateSource(inputVal, sourceType));
   let showValidationError = $derived((touched || inputVal.trim().length > 0) && !validation.valid);
+  let displayAgents = $derived(agents.length > 0 ? agents : DEFAULT_AGENT_ROSTER);
 
   function submit(event) {
     event.preventDefault();
@@ -109,7 +43,6 @@
 
 <div class="source-bar-wrapper" aria-label="Source code repository controls">
   <form class="source-top-div" onsubmit={submit} novalidate>
-    <!-- Section 1: Source Path Input -->
     <div class="source-section source-section--path">
       <label class="source-section__label" for="repo-source-input">
         1 · Source Path
@@ -141,7 +74,6 @@
       </div>
     </div>
 
-    <!-- Section 2: Dropdown to select Local or Github -->
     <div class="source-section source-section--type">
       <label class="source-section__label" for="repo-source-type">
         2 · Source Type
@@ -160,7 +92,6 @@
       </div>
     </div>
 
-    <!-- Section 3: Analyze button and Reset Demo -->
     <div class="source-section source-section--actions">
       <span class="source-section__label">3 · Actions</span>
       <div class="source-section__buttons">
@@ -207,51 +138,18 @@
 
   {#if showAgents}
     <div class="agent-strip" aria-label="Multi-agent hierarchy status">
-      {#if agents.length > 0}
-        {#each agents as agent (agent.agent_id)}
-          <div class="agent-card">
-            <div class="agent-card__top">
-              <span class="agent-card__id">{agent.agent_id}</span>
-              {#if agent.layer}
-                <span class="agent-card__layer">{agent.layer}</span>
-              {/if}
-            </div>
-            <span class="agent-card__role">{agent.role}</span>
-            <p class="agent-card__summary">{agent.summary}</p>
+      {#each displayAgents as agent (agent.agent_id)}
+        <div class="agent-card">
+          <div class="agent-card__top">
+            <span class="agent-card__id">{agent.agent_id}</span>
+            {#if agent.layer}
+              <span class="agent-card__layer">{agent.layer}</span>
+            {/if}
           </div>
-        {/each}
-      {:else}
-        <div class="agent-card">
-          <span class="agent-card__id">c4-manager</span>
-          <span class="agent-card__role">Manager Agent</span>
-          <p class="agent-card__summary">Accepts local path or GitHub URL, clones/scans repository, and invokes Supervisor.</p>
+          <span class="agent-card__role">{agent.role}</span>
+          <p class="agent-card__summary">{agent.summary}</p>
         </div>
-        <div class="agent-card">
-          <span class="agent-card__id">c4-supervisor</span>
-          <span class="agent-card__role">Supervisor Agent</span>
-          <p class="agent-card__summary">Coordinates all 4 layer subagents and links Context → Container → Component → Code as a hierarchy tree.</p>
-        </div>
-        <div class="agent-card">
-          <span class="agent-card__id">subagent-context</span>
-          <span class="agent-card__role">Context Specialist</span>
-          <p class="agent-card__summary">Extracts top-level actors, systems in scope, and external integrations.</p>
-        </div>
-        <div class="agent-card">
-          <span class="agent-card__id">subagent-container</span>
-          <span class="agent-card__role">Container Specialist</span>
-          <p class="agent-card__summary">Extracts deployable apps, services, and data stores linked to Context systems.</p>
-        </div>
-        <div class="agent-card">
-          <span class="agent-card__id">subagent-component</span>
-          <span class="agent-card__role">Component Specialist</span>
-          <p class="agent-card__summary">Extracts controllers, services, and modules linked to parent Containers.</p>
-        </div>
-        <div class="agent-card">
-          <span class="agent-card__id">subagent-code</span>
-          <span class="agent-card__role">Code Specialist</span>
-          <p class="agent-card__summary">Extracts classes, interfaces, and module exports linked to parent Components.</p>
-        </div>
-      {/if}
+      {/each}
     </div>
   {/if}
 </div>

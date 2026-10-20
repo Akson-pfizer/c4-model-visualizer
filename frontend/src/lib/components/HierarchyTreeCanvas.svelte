@@ -19,6 +19,7 @@
   let {
     hierarchy = [],
     onNodeSelect,
+    onNodeDoubleClick,
     loadGeneration = 0,
     onReady
   } = $props();
@@ -76,6 +77,11 @@
         seenKinds.push(item.kind);
       }
 
+      const nextLayer =
+        LAYER_ORDER.indexOf(layerKey) < LAYER_ORDER.length - 1
+          ? LAYER_ORDER[LAYER_ORDER.indexOf(layerKey) + 1]
+          : null;
+
       flowNodes.push({
         id: flowId,
         type: 'c4Node',
@@ -87,6 +93,7 @@
         height: NODE_HEIGHT,
         zIndex: 1,
         data: {
+          rawId: item.id,
           kind: item.kind,
           name: item.name,
           technology: item.technology
@@ -94,7 +101,18 @@
             : LAYER_BADGES[layerKey],
           description: item.description,
           layer: layerKey,
-          parentNodeId: item.parentNodeId ?? null
+          nextLayer,
+          parentNodeId: item.parentNodeId ?? null,
+          onDrillDown: () =>
+            onNodeDoubleClick?.({
+              id: item.id,
+              type: 'c4Node',
+              data: {
+                ...item,
+                layer: layerKey,
+                nextLayer
+              }
+            })
         }
       });
 
@@ -149,6 +167,15 @@
     if (node.type === 'c4Node') onNodeSelect?.(node);
   }
 
+  function handleNodeDoubleClick({ node }) {
+    if (node.type === 'c4Node') {
+      onNodeDoubleClick?.({
+        ...node,
+        id: node.data.rawId || node.id
+      });
+    }
+  }
+
   function handlePaneClick() {
     onNodeSelect?.(null);
   }
@@ -171,8 +198,10 @@
       fitViewOptions={{ padding: 0.2 }}
       minZoom={0.2}
       maxZoom={1.5}
+      zoomOnDoubleClick={false}
       proOptions={{ hideAttribution: true }}
       onnodeclick={handleNodeClick}
+      onnodedoubleclick={handleNodeDoubleClick}
       onpaneclick={handlePaneClick}
     >
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />

@@ -56,6 +56,22 @@ class LegendItem(BaseModel):
 class Boundary(BaseModel):
     id: str
     label: str
+    subtitle: str | None = Field(
+        default=None,
+        description="Upper-layer stereotype & technology badge, e.g. 'Upper Layer: Container · Zoomed In · Next.js 16 / React 19'.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Business or architectural summary carried forward from the upper-layer node to explain the zoomed-in scope.",
+    )
+    upperLayer: Layer | None = Field(
+        default=None,
+        description="The upper C4 layer ('context', 'container', 'component') from which this transparent boundary was carried forward.",
+    )
+    sourceNodeId: str | None = Field(
+        default=None,
+        description="The node ID in the upper layer that was zoomed in / opened up to form this transparent boundary.",
+    )
     position: Position
     size: Size
 
@@ -68,6 +84,10 @@ class NodeData(BaseModel):
     parentNodeId: str | None = Field(
         default=None,
         description="ID of the node in the parent C4 layer (Context -> Container -> Component -> Code) that this element belongs to.",
+    )
+    sourceScope: str | None = Field(
+        default=None,
+        description="Directory or module scope path governed by this node, used to carry upper-layer context down into child layers.",
     )
 
 

@@ -12,29 +12,30 @@ from app.schemas import KINDS_BY_LAYER, Layer
 
 LAYER_FRAMING: dict[Layer, str] = {
     "context": (
-        "Identify the software system(s) this repository implements, the people/actors "
-        "who use it, and any external systems it integrates with (databases-as-a-service, "
-        "third-party APIs, other internal systems it calls or is called by). "
-        "This is the big-picture view for a non-technical audience — no technology details."
+        "Act as the high-level Business Reference for the system's components and containers. "
+        "Identify the core business capabilities/contexts delivered on top of the containers, "
+        "the business personas/roles who interact with them, and the external business/platform "
+        "systems integrated with the solution. Each in-scope system node should serve as a "
+        "business capability reference explaining what domain context is worked on top of the containers."
     ),
     "container": (
-        "Identify the deployable/runnable units inside this system: web apps, APIs/services, "
-        "background workers, CLIs, databases, queues. For each, name the concrete technology "
-        "(language, framework, datastore engine) you can see evidence of in the source. "
-        "Include the people/external systems from the context view as supporting nodes if they "
-        "directly interact with a container."
+        "Carry forward the upper-layer Business Context system(s) as enlarged, transparent-bordered "
+        "boundaries (zoomed-in frames) and identify ALL deployable/runtime containers inside them: "
+        "web apps, UI component suites, domain/agent libraries, state/query hooks, APIs/services, "
+        "and databases/migrations. Name the concrete technology for each and include supporting "
+        "business personas and external systems."
     ),
     "component": (
-        "Zoom into ONE container (pick the most central one, e.g. the main API/service) and "
-        "identify its major internal building blocks — controllers, services, repositories, "
-        "facades — and their responsibilities. Include the containers/external systems that "
-        "directly call into or are called by this container's components as supporting nodes."
+        "Carry forward EVERY in-scope Container from the Container layer as an enlarged, "
+        "transparent-bordered boundary (`upperLayer: 'container'`) — imagine each container is "
+        "zoomed in and opened up to explain the internal components inside it. Do NOT drop "
+        "containers: extract the major internal components (routes, UI modules, services, queries, "
+        "hooks, data/schema modules) inside every carried-forward container boundary."
     ),
     "code": (
-        "Zoom into ONE component from the container above and identify its key classes, "
-        "interfaces, and enums, and how they relate (implements/uses/extends). "
-        "Keep this small and illustrative — C4 guidance recommends against hand-modelling "
-        "this level in real projects; this is a best-effort illustrative snapshot only."
+        "Carry forward the upper-layer Components from the Component layer as enlarged, "
+        "transparent-bordered boundaries (`upperLayer: 'component'`) and open each component up "
+        "to show its key classes, interfaces, hooks, functions, and types inside its transparent border."
     ),
 }
 

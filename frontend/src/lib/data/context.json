@@ -1,94 +1,146 @@
 {
   "layer": "context",
   "title": "System Context",
-  "subtitle": "Internet Banking System",
-  "description": "The big picture: the system under design and the people and external systems it talks to. Intended audience: everyone, technical or not.",
-  "note": null,
+  "subtitle": "Business Reference Context · Internet Banking System",
+  "description": "Business Reference Context: high-level business capabilities, domain workflows, and personas worked on top of the underlying containers and components.",
+  "note": "Business Reference Layer: maps high-level business capabilities and user roles directly to the containers and components that deliver them.",
   "legend": [
     { "kind": "person", "label": "Person" },
     { "kind": "system", "label": "Software System (in scope)" },
     { "kind": "systemExternal", "label": "Software System (external)" }
   ],
-  "boundaries": [],
+  "boundaries": [
+    {
+      "id": "boundary-context-ibs",
+      "label": "Internet Banking System — Business Reference Context",
+      "subtitle": "Business Capability Map · Worked on Top of Containers & Components",
+      "description": "Digital retail banking capabilities enabling account visibility, payments, security governance, and core ledger synchronization.",
+      "upperLayer": "context",
+      "sourceNodeId": null,
+      "position": { "x": 300, "y": 40 },
+      "size": { "width": 600, "height": 455 }
+    }
+  ],
   "nodes": [
     {
       "id": "customer",
       "type": "c4Node",
-      "position": { "x": 20, "y": 260 },
+      "position": { "x": 20, "y": 180 },
       "data": {
         "kind": "person",
-        "name": "Customer",
-        "technology": null,
+        "name": "Retail Bank Customer",
+        "technology": "Business Persona",
         "parentNodeId": null,
-        "description": "A customer of the bank, with personal bank accounts."
+        "description": "A customer of the bank who views personal account balances, statements, and initiates payments."
       }
     },
     {
-      "id": "ibs",
+      "id": "ibs-channels-context",
       "type": "c4Node",
-      "position": { "x": 360, "y": 260 },
+      "parentId": "boundary-context-ibs",
+      "extent": "parent",
+      "position": { "x": 35, "y": 78 },
       "data": {
         "kind": "system",
-        "name": "Internet Banking System",
-        "technology": null,
-        "description": "Allows customers to view information about their bank accounts and make payments."
+        "name": "Omnichannel Digital Banking Context",
+        "technology": "Business Reference → Web, SPA & Mobile Containers",
+        "parentNodeId": null,
+        "description": "Delivers self-service web and mobile customer experiences for account dashboards and payment initiation."
+      }
+    },
+    {
+      "id": "ibs-core-api-context",
+      "type": "c4Node",
+      "parentId": "boundary-context-ibs",
+      "extent": "parent",
+      "position": { "x": 325, "y": 78 },
+      "data": {
+        "kind": "system",
+        "name": "Account, Payment & Security API Context",
+        "technology": "Business Reference → API Application Container",
+        "parentNodeId": null,
+        "description": "Governs sign-in authentication, account summary aggregation, payment orchestration, and mainframe integration."
+      }
+    },
+    {
+      "id": "ibs-identity-ledger-context",
+      "type": "c4Node",
+      "parentId": "boundary-context-ibs",
+      "extent": "parent",
+      "position": { "x": 180, "y": 265 },
+      "data": {
+        "kind": "system",
+        "name": "Customer Identity & Audit Store Context",
+        "technology": "Business Reference → Database Container",
+        "parentNodeId": null,
+        "description": "Persists customer registration records, hashed credentials, role entitlements, and security access audit logs."
       }
     },
     {
       "id": "email-system",
       "type": "c4Node",
-      "position": { "x": 700, "y": 150 },
+      "position": { "x": 965, "y": 110 },
       "data": {
         "kind": "systemExternal",
         "name": "E-Mail System",
-        "technology": null,
-        "description": "The internal Microsoft Exchange e-mail system."
+        "technology": "Microsoft Exchange / SMTP",
+        "parentNodeId": null,
+        "description": "Internal enterprise e-mail platform that dispatches transaction alerts and security notifications."
       }
     },
     {
       "id": "mainframe",
       "type": "c4Node",
-      "position": { "x": 700, "y": 370 },
+      "position": { "x": 965, "y": 310 },
       "data": {
         "kind": "systemExternal",
         "name": "Mainframe Banking System",
-        "technology": null,
-        "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
+        "technology": "Core Banking Ledger / XML",
+        "parentNodeId": null,
+        "description": "System of record for core customer accounts, balances, and cleared financial transactions."
       }
     }
   ],
   "edges": [
     {
-      "id": "e-customer-ibs",
+      "id": "e-customer-channels",
       "source": "customer",
-      "target": "ibs",
+      "target": "ibs-channels-context",
       "type": "c4Edge",
-      "label": "Uses",
-      "data": { "technology": null }
+      "label": "Views accounts & initiates payments in",
+      "data": { "technology": "HTTPS / Web & Mobile" }
+    },
+    {
+      "id": "e-channels-api",
+      "source": "ibs-channels-context",
+      "target": "ibs-core-api-context",
+      "type": "c4Edge",
+      "label": "Executes banking workflows via",
+      "data": { "technology": "Domain API" }
+    },
+    {
+      "id": "e-api-ledger",
+      "source": "ibs-core-api-context",
+      "target": "ibs-identity-ledger-context",
+      "type": "c4Edge",
+      "label": "Verifies identity & logs audit events in",
+      "data": { "technology": "Transactional Store" }
     },
     {
       "id": "e-ibs-email",
-      "source": "ibs",
+      "source": "ibs-core-api-context",
       "target": "email-system",
       "type": "c4Edge",
-      "label": "Sends e-mails using",
+      "label": "Sends e-mail notifications using",
       "data": { "technology": "SMTP" }
     },
     {
-      "id": "e-email-customer",
-      "source": "email-system",
-      "target": "customer",
-      "type": "c4Edge",
-      "label": "Sends e-mails to",
-      "data": { "technology": null }
-    },
-    {
       "id": "e-ibs-mainframe",
-      "source": "ibs",
+      "source": "ibs-core-api-context",
       "target": "mainframe",
       "type": "c4Edge",
-      "label": "Uses",
-      "data": { "technology": null }
+      "label": "Reads balances & posts payments to",
+      "data": { "technology": "XML / HTTPS" }
     }
   ]
 }

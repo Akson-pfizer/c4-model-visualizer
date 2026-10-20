@@ -16,7 +16,8 @@
   import C4Edge from './edges/C4Edge.svelte';
   import Legend from './Legend.svelte';
 
-  let { layer, onNodeSelect, loadGeneration, onReady } = $props();
+  let { layer, onNodeSelect, onNodeDoubleClick, onBoundaryClick, loadGeneration, onReady } =
+    $props();
 
   const nodeTypes = { c4Node: C4Node, c4Boundary: C4Boundary };
   const edgeTypes = { c4Edge: C4Edge };
@@ -24,9 +25,31 @@
     markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: '#8fa9c9' }
   };
 
+  function attachNodeDrillHandlers(rawNodes) {
+    return rawNodes.map((n) => {
+      if (n.type === 'c4Boundary') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            onNavigateUpper: () => onBoundaryClick?.(n)
+          }
+        };
+      }
+      if (n.type !== 'c4Node') return n;
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          onDrillDown: () => onNodeDoubleClick?.(n)
+        }
+      };
+    });
+  }
+
   // App.svelte remounts this component fresh per layer (via {#key}), so `layer`
   // is only ever read once per instance — untrack() makes that explicit.
-  let nodes = $state.raw(untrack(() => layer.nodes));
+  let nodes = $state.raw(untrack(() => attachNodeDrillHandlers(layer.nodes)));
   let edges = $state.raw(untrack(() => layer.edges));
 
   const { fitView } = useSvelteFlow();
@@ -36,17 +59,25 @@
   // frame after init, once the container has its real dimensions.
   function handleInit() {
     requestAnimationFrame(() => {
-      fitView({ padding: 0.2, duration: 200 });
+      fitView({ padding: 0.16, duration: 200 });
       onReady?.(loadGeneration);
     });
   }
 
   function handleNodeClick({ node }) {
-    if (node.type === 'c4Node') onNodeSelect(node);
+    if (node.type === 'c4Node') {
+      onNodeSelect?.(node);
+    } else if (node.type === 'c4Boundary' && node.data?.targetUpperLayer) {
+      onBoundaryClick?.(node);
+    }
+  }
+
+  function handleNodeDoubleClick({ node }) {
+    if (node.type === 'c4Node') onNodeDoubleClick?.(node);
   }
 
   function handlePaneClick() {
-    onNodeSelect(null);
+    onNodeSelect?.(null);
   }
 </script>
 
@@ -57,12 +88,14 @@
   {edgeTypes}
   {defaultEdgeOptions}
   fitView
-  fitViewOptions={{ padding: 0.2 }}
-  minZoom={0.3}
-  maxZoom={1.5}
+  fitViewOptions={{ padding: 0.16 }}
+  minZoom={0.12}
+  maxZoom={1.6}
+  zoomOnDoubleClick={false}
   proOptions={{ hideAttribution: true }}
   oninit={handleInit}
   onnodeclick={handleNodeClick}
+  onnodedoubleclick={handleNodeDoubleClick}
   onpaneclick={handlePaneClick}
 >
   <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />

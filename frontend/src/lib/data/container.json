@@ -1,9 +1,9 @@
 {
   "layer": "container",
   "title": "Container",
-  "subtitle": "Zoomed into: Internet Banking System",
-  "description": "The high-level technology choices: the applications and data stores that make up the system, how they're built, and how they talk to each other. Intended audience: architects and tech leads.",
-  "note": null,
+  "subtitle": "Zoomed into 3 Business Contexts · All Containers Opened Up",
+  "description": "Zoomed-In Business Context: upper-layer business contexts open up with transparent borders to reveal all application, API, and database containers inside.",
+  "note": "Upper-layer Business Context nodes are carried forward as transparent dashed boundaries so you can see which business domain each container serves.",
   "legend": [
     { "kind": "person", "label": "Person" },
     { "kind": "container", "label": "Container" },
@@ -12,91 +12,115 @@
   ],
   "boundaries": [
     {
-      "id": "ibs-boundary",
-      "label": "Internet Banking System",
-      "position": { "x": 260, "y": 40 },
-      "size": { "width": 820, "height": 400 }
+      "id": "boundary-channels-ctx",
+      "label": "Omnichannel Digital Banking Context",
+      "subtitle": "Upper Layer: Business Context (Zoomed In) · Web, SPA & Mobile",
+      "description": "Delivers self-service web and mobile customer experiences for account dashboards and payment initiation.",
+      "upperLayer": "context",
+      "sourceNodeId": "ibs-channels-context",
+      "position": { "x": 280, "y": 40 },
+      "size": { "width": 830, "height": 255 }
+    },
+    {
+      "id": "boundary-api-ctx",
+      "label": "Account, Payment & Security API Context",
+      "subtitle": "Upper Layer: Business Context (Zoomed In) · Core Banking API",
+      "description": "Governs sign-in authentication, account summary aggregation, payment orchestration, and mainframe integration.",
+      "upperLayer": "context",
+      "sourceNodeId": "ibs-core-api-context",
+      "position": { "x": 280, "y": 335 },
+      "size": { "width": 395, "height": 255 }
+    },
+    {
+      "id": "boundary-db-ctx",
+      "label": "Customer Identity & Audit Store Context",
+      "subtitle": "Upper Layer: Business Context (Zoomed In) · Relational Store",
+      "description": "Persists customer registration records, hashed credentials, role entitlements, and security access audit logs.",
+      "upperLayer": "context",
+      "sourceNodeId": "ibs-identity-ledger-context",
+      "position": { "x": 715, "y": 335 },
+      "size": { "width": 395, "height": 255 }
     }
   ],
   "nodes": [
     {
       "id": "webapp",
       "type": "c4Node",
-      "parentId": "ibs-boundary",
+      "parentId": "boundary-channels-ctx",
       "extent": "parent",
-      "position": { "x": 40, "y": 40 },
+      "position": { "x": 35, "y": 78 },
       "data": {
         "kind": "container",
         "name": "Web Application",
         "technology": "Java, Spring MVC",
-        "parentNodeId": "ibs",
+        "parentNodeId": "ibs-channels-context",
         "description": "Delivers the static content and the Internet banking single-page application."
       }
     },
     {
       "id": "spa",
       "type": "c4Node",
-      "parentId": "ibs-boundary",
+      "parentId": "boundary-channels-ctx",
       "extent": "parent",
-      "position": { "x": 300, "y": 40 },
+      "position": { "x": 300, "y": 78 },
       "data": {
         "kind": "container",
         "name": "Single-Page Application",
         "technology": "JavaScript, Angular",
-        "parentNodeId": "ibs",
+        "parentNodeId": "ibs-channels-context",
         "description": "Provides all of the Internet banking functionality to customers via their web browser."
       }
     },
     {
       "id": "mobileapp",
       "type": "c4Node",
-      "parentId": "ibs-boundary",
+      "parentId": "boundary-channels-ctx",
       "extent": "parent",
-      "position": { "x": 560, "y": 40 },
+      "position": { "x": 565, "y": 78 },
       "data": {
         "kind": "container",
         "name": "Mobile App",
         "technology": "C#, Xamarin",
-        "parentNodeId": "ibs",
-        "description": "Provides a limited subset of the Internet banking functionality to customers via their mobile device."
-      }
-    },
-    {
-      "id": "database",
-      "type": "c4Node",
-      "parentId": "ibs-boundary",
-      "extent": "parent",
-      "position": { "x": 40, "y": 220 },
-      "data": {
-        "kind": "containerDb",
-        "name": "Database",
-        "technology": "SQL Database",
-        "parentNodeId": "ibs",
-        "description": "Stores user registration information, hashed authentication credentials, access logs, etc."
+        "parentNodeId": "ibs-channels-context",
+        "description": "Provides a subset of the Internet banking functionality to customers via their mobile device."
       }
     },
     {
       "id": "apiapp",
       "type": "c4Node",
-      "parentId": "ibs-boundary",
+      "parentId": "boundary-api-ctx",
       "extent": "parent",
-      "position": { "x": 300, "y": 220 },
+      "position": { "x": 85, "y": 78 },
       "data": {
         "kind": "container",
         "name": "API Application",
-        "technology": "Java, Docker Container",
-        "parentNodeId": "ibs",
-        "description": "Provides Internet banking functionality via a JSON/HTTPS API."
+        "technology": "Java, Spring Boot, Docker",
+        "parentNodeId": "ibs-core-api-context",
+        "description": "Provides Internet banking functionality via a JSON/HTTPS REST API."
+      }
+    },
+    {
+      "id": "database",
+      "type": "c4Node",
+      "parentId": "boundary-db-ctx",
+      "extent": "parent",
+      "position": { "x": 85, "y": 78 },
+      "data": {
+        "kind": "containerDb",
+        "name": "Database",
+        "technology": "PostgreSQL / SQL Database",
+        "parentNodeId": "ibs-identity-ledger-context",
+        "description": "Stores user registration information, hashed authentication credentials, access logs, etc."
       }
     },
     {
       "id": "customer",
       "type": "c4Node",
-      "position": { "x": 20, "y": 470 },
+      "position": { "x": 20, "y": 140 },
       "data": {
         "kind": "person",
-        "name": "Customer",
-        "technology": null,
+        "name": "Retail Bank Customer",
+        "technology": "Business Persona",
         "parentNodeId": "customer",
         "description": "A customer of the bank, with personal bank accounts."
       }
@@ -104,11 +128,11 @@
     {
       "id": "email-system",
       "type": "c4Node",
-      "position": { "x": 320, "y": 470 },
+      "position": { "x": 1165, "y": 140 },
       "data": {
         "kind": "systemExternal",
         "name": "E-Mail System",
-        "technology": null,
+        "technology": "Microsoft Exchange / SMTP",
         "parentNodeId": "email-system",
         "description": "The internal Microsoft Exchange e-mail system."
       }
@@ -116,26 +140,25 @@
     {
       "id": "mainframe",
       "type": "c4Node",
-      "position": { "x": 620, "y": 470 },
+      "position": { "x": 1165, "y": 380 },
       "data": {
         "kind": "systemExternal",
         "name": "Mainframe Banking System",
-        "technology": null,
+        "technology": "Core Banking Ledger",
         "parentNodeId": "mainframe",
         "description": "Stores all of the core banking information about customers, accounts, transactions, etc."
       }
     }
   ],
   "edges": [
-    { "id": "e-cust-webapp", "source": "customer", "target": "webapp", "type": "c4Edge", "label": "Uses", "data": { "technology": "HTTPS" } },
-    { "id": "e-cust-spa", "source": "customer", "target": "spa", "type": "c4Edge", "label": "Uses", "data": { "technology": "HTTPS" } },
-    { "id": "e-cust-mobile", "source": "customer", "target": "mobileapp", "type": "c4Edge", "label": "Uses", "data": { "technology": "HTTPS" } },
-    { "id": "e-webapp-spa", "source": "webapp", "target": "spa", "type": "c4Edge", "label": "Delivers to the customer's browser", "data": { "technology": null } },
+    { "id": "e-cust-webapp", "source": "customer", "target": "webapp", "type": "c4Edge", "label": "Visits", "data": { "technology": "HTTPS" } },
+    { "id": "e-cust-spa", "source": "customer", "target": "spa", "type": "c4Edge", "label": "Views accounts & pays in", "data": { "technology": "HTTPS" } },
+    { "id": "e-cust-mobile", "source": "customer", "target": "mobileapp", "type": "c4Edge", "label": "Uses on mobile", "data": { "technology": "HTTPS" } },
+    { "id": "e-webapp-spa", "source": "webapp", "target": "spa", "type": "c4Edge", "label": "Delivers to browser", "data": { "technology": null } },
     { "id": "e-spa-api", "source": "spa", "target": "apiapp", "type": "c4Edge", "label": "Makes API calls to", "data": { "technology": "JSON/HTTPS" } },
     { "id": "e-mobile-api", "source": "mobileapp", "target": "apiapp", "type": "c4Edge", "label": "Makes API calls to", "data": { "technology": "JSON/HTTPS" } },
     { "id": "e-api-db", "source": "apiapp", "target": "database", "type": "c4Edge", "label": "Reads from and writes to", "data": { "technology": "JDBC" } },
     { "id": "e-api-email", "source": "apiapp", "target": "email-system", "type": "c4Edge", "label": "Sends e-mail using", "data": { "technology": "SMTP" } },
-    { "id": "e-email-cust", "source": "email-system", "target": "customer", "type": "c4Edge", "label": "Sends e-mails to", "data": { "technology": null } },
-    { "id": "e-api-mainframe", "source": "apiapp", "target": "mainframe", "type": "c4Edge", "label": "Uses", "data": { "technology": "XML/HTTPS" } }
+    { "id": "e-api-mainframe", "source": "apiapp", "target": "mainframe", "type": "c4Edge", "label": "Reads/writes ledger via", "data": { "technology": "XML/HTTPS" } }
   ]
 }

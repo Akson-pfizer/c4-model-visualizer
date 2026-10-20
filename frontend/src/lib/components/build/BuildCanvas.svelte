@@ -15,6 +15,7 @@
   import C4Edge from '../edges/C4Edge.svelte';
   import Legend from '../Legend.svelte';
   import { ARROWS, SHAPES } from '../../buildCatalog.js';
+  import { cloneDiagramSnapshot } from '../../keyboardShortcuts.js';
 
   let {
     activeArrowId = 'uses',
@@ -23,6 +24,9 @@
     legend = [],
     loadGeneration = 0,
     onChange,
+    onHistoryStateChange,
+    onNodeDoubleClick,
+    onBoundaryClick,
     onReady
   } = $props();
 
@@ -46,8 +50,67 @@
     markerEnd: closedMarker
   };
 
-  let nodes = $state.raw(untrack(() => initialNodes));
+  function decorateNodes(rawNodes) {
+    return rawNodes.map((n) => {
+      if (n.type === 'c4Boundary') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            onNavigateUpper: () => onBoundaryClick?.(n)
+          }
+        };
+      }
+      if (n.type === 'c4Node') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            onDrillDown: () => onNodeDoubleClick?.(n)
+          }
+        };
+      }
+      return n;
+    });
+  }
+
+  let nodes = $state.raw(untrack(() => decorateNodes(initialNodes)));
   let edges = $state.raw(untrack(() => initialEdges));
+
+  // Undo / Redo & Clipboard state for canvas edits
+  let pastStack = $state.raw([]);
+  let futureStack = $state.raw([]);
+  let clipboardBuffer = $state.raw({ nodes: [], edges: [] });
+
+  function notifyHistoryState() {
+    onHistoryStateChange?.({
+      canUndo: pastStack.length > 0,
+      canRedo: futureStack.length > 0,
+      hasClipboard: clipboardBuffer.nodes.length > 0
+    });
+  }
+
+  function recordSnapshot() {
+    const snap = cloneDiagramSnapshot(nodes, edges);
+    pastStack = [...pastStack.slice(-39), snap];
+    futureStack = [];
+    notifyHistoryState();
+  }
+
+  function handleNodeClick({ node }) {
+    if (node?.type === 'c4Boundary' && node.data?.targetUpperLayer) {
+      onBoundaryClick?.(node);
+    }
+  }
+
+  function handleNodeDoubleClick({ node }) {
+    if (!node || node.type !== 'c4Node') return;
+    onNodeDoubleClick?.(node);
+  }
+
+  function handleNodeDragStart() {
+    recordSnapshot();
+  }
 
   $effect(() => {
     onChange?.(nodes, edges);
@@ -60,6 +123,7 @@
   function handleInit() {
     requestAnimationFrame(() => {
       fitView({ padding: 0.2, duration: 200 });
+      notifyHistoryState();
       onReady?.(loadGeneration);
     });
   }
@@ -86,6 +150,7 @@
     const arrow = ARROWS.find((a) => a.id === itemId);
 
     if (shape) {
+      recordSnapshot();
       const point =
         clientX != null && clientY != null
           ? screenToFlowPosition({ x: clientX, y: clientY })
@@ -122,18 +187,162 @@
           description: shape.summary
         }
       };
-      nodes = [...nodes, node];
+      nodes = decorateNodes([...nodes, node]);
       return;
     }
 
     if (arrow) {
       const elementNodes = nodes.filter((n) => n.type === 'c4Node');
       if (elementNodes.length < 2) return;
+      recordSnapshot();
       const source = elementNodes[elementNodes.length - 2].id;
       const target = elementNodes[elementNodes.length - 1].id;
       seq += 1;
       edges = [...edges, makeEdge(`edge-${seq}-${arrow.id}`, source, target, arrow.id)];
     }
+  }
+
+  export function undo() {
+    if (pastStack.length === 0) return false;
+    const currentSnap = cloneDiagramSnapshot(nodes, edges);
+    const previousSnap = pastStack[pastStack.length - 1];
+    pastStack = pastStack.slice(0, -1);
+    futureStack = [...futureStack, currentSnap];
+    nodes = decorateNodes(previousSnap.nodes);
+    edges = previousSnap.edges;
+    notifyHistoryState();
+    return true;
+  }
+
+  export function redo() {
+    if (futureStack.length === 0) return false;
+    const currentSnap = cloneDiagramSnapshot(nodes, edges);
+    const nextSnap = futureStack[futureStack.length - 1];
+    futureStack = futureStack.slice(0, -1);
+    pastStack = [...pastStack, currentSnap];
+    nodes = decorateNodes(nextSnap.nodes);
+    edges = nextSnap.edges;
+    notifyHistoryState();
+    return true;
+  }
+
+  export function copySelected() {
+    const selectedNodes = nodes.filter((n) => n.selected && n.type === 'c4Node');
+    const fallbackNodes =
+      selectedNodes.length > 0
+        ? selectedNodes
+        : nodes.filter((n) => n.type === 'c4Node').slice(-1);
+    if (fallbackNodes.length === 0) return 0;
+
+    const selectedIds = new Set(fallbackNodes.map((n) => n.id));
+    const relatedEdges = edges.filter(
+      (e) => selectedIds.has(e.source) && selectedIds.has(e.target)
+    );
+    clipboardBuffer = cloneDiagramSnapshot(fallbackNodes, relatedEdges);
+    notifyHistoryState();
+
+    try {
+      navigator.clipboard?.writeText(
+        JSON.stringify(
+          fallbackNodes.map((n) => ({
+            id: n.id,
+            name: n.data?.name,
+            kind: n.data?.kind,
+            technology: n.data?.technology,
+            description: n.data?.description
+          })),
+          null,
+          2
+        )
+      );
+    } catch {
+      // Ignore browser clipboard permission errors; internal canvas clipboard still works
+    }
+    return fallbackNodes.length;
+  }
+
+  export function cutSelected() {
+    const count = copySelected();
+    if (count > 0) {
+      deleteSelected();
+    }
+    return count;
+  }
+
+  export function pasteClipboard() {
+    if (!clipboardBuffer.nodes || clipboardBuffer.nodes.length === 0) return 0;
+    recordSnapshot();
+
+    const idMap = new Map();
+    const newNodes = clipboardBuffer.nodes.map((orig) => {
+      seq += 1;
+      const newId = `${orig.id}-copy-${seq}`;
+      idMap.set(orig.id, newId);
+      return {
+        ...structuredClone(orig),
+        id: newId,
+        selected: true,
+        position: {
+          x: Math.round((orig.position?.x ?? 120) + 36),
+          y: Math.round((orig.position?.y ?? 120) + 36)
+        },
+        data: {
+          ...orig.data,
+          name: orig.data?.name?.endsWith('(Copy)')
+            ? orig.data.name
+            : `${orig.data?.name || 'Component'} (Copy)`
+        }
+      };
+    });
+
+    const newEdges = (clipboardBuffer.edges ?? [])
+      .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+      .map((e) => {
+        seq += 1;
+        return {
+          ...structuredClone(e),
+          id: `edge-${seq}-copy`,
+          source: idMap.get(e.source),
+          target: idMap.get(e.target)
+        };
+      });
+
+    const deselectedExisting = nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
+    nodes = decorateNodes([...deselectedExisting, ...newNodes]);
+    edges = [...edges, ...newEdges];
+    return newNodes.length;
+  }
+
+  export function duplicateSelected() {
+    const copied = copySelected();
+    if (copied === 0) return 0;
+    return pasteClipboard();
+  }
+
+  export function deleteSelected() {
+    const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+    const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id));
+    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return 0;
+
+    recordSnapshot();
+    nodes = nodes.filter((n) => !selectedNodeIds.has(n.id));
+    edges = edges.filter(
+      (e) =>
+        !selectedEdgeIds.has(e.id) &&
+        !selectedNodeIds.has(e.source) &&
+        !selectedNodeIds.has(e.target)
+    );
+    return selectedNodeIds.size + selectedEdgeIds.size;
+  }
+
+  export function selectAllNodes() {
+    nodes = nodes.map((n) => (n.type === 'c4Node' ? { ...n, selected: true } : n));
+    return nodes.filter((n) => n.selected).length;
+  }
+
+  export function clearSelection() {
+    nodes = nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
+    edges = edges.map((e) => (e.selected ? { ...e, selected: false } : e));
   }
 
   export function getDiagram() {
@@ -142,6 +351,7 @@
 
   function handleConnect(connection) {
     if (!connection.source || !connection.target) return;
+    recordSnapshot();
     seq += 1;
     edges = [
       ...edges,
@@ -174,6 +384,10 @@
     {defaultEdgeOptions}
     oninit={handleInit}
     onconnect={handleConnect}
+    onnodeclick={handleNodeClick}
+    onnodedoubleclick={handleNodeDoubleClick}
+    onnodedragstart={handleNodeDragStart}
+    zoomOnDoubleClick={false}
     fitView
     fitViewOptions={{ padding: 0.2 }}
     minZoom={0.3}

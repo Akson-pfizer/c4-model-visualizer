@@ -1,81 +1,166 @@
 {
   "layer": "code",
   "title": "Code",
-  "subtitle": "Zoomed into: Security Component",
-  "description": "Classes, interfaces, and their relationships inside one component. Intended audience: the developer currently working on this code.",
-  "note": "C4 guidance recommends against hand-modelling this level: generate it from your IDE or build tooling and link out to source instead. This diagram is an illustrative demo only.",
+  "subtitle": "Zoomed into Upper-Layer Components · Code & Type Symbols Opened Up",
+  "description": "Zoomed-In Components: upper-layer components are carried forward with enlarged transparent borders, opening up to show their classes, interfaces, and enums.",
+  "note": "Upper-layer Components are carried forward as enlarged transparent boundaries enclosing their concrete code classes, interfaces, and exported symbols.",
   "legend": [
     { "kind": "codeInterface", "label": "Interface" },
     { "kind": "codeClass", "label": "Class" },
     { "kind": "codeEnum", "label": "Enum" }
   ],
-  "boundaries": [],
-  "nodes": [
+  "boundaries": [
     {
-      "id": "security-service-impl",
-      "type": "c4Node",
-      "position": { "x": 360, "y": 40 },
-      "data": {
-        "kind": "codeClass",
-        "name": "SecurityServiceImpl",
-        "technology": "class",
-        "parentNodeId": "security",
-        "description": "Default implementation of SecurityService."
-      }
+      "id": "boundary-code-security",
+      "label": "Security Component",
+      "subtitle": "Upper Layer: Component (Zoomed In) · API Application · Spring Bean",
+      "description": "Provides functionality related to signing in, changing passwords, and session verification.",
+      "upperLayer": "component",
+      "sourceNodeId": "security",
+      "position": { "x": 40, "y": 40 },
+      "size": { "width": 560, "height": 445 }
     },
+    {
+      "id": "boundary-code-facade",
+      "label": "Mainframe Banking System Facade",
+      "subtitle": "Upper Layer: Component (Zoomed In) · API Application · Spring Bean",
+      "description": "A facade onto the mainframe banking system, hiding XML integration details.",
+      "upperLayer": "component",
+      "sourceNodeId": "mainframe-facade",
+      "position": { "x": 650, "y": 40 },
+      "size": { "width": 560, "height": 265 }
+    },
+    {
+      "id": "boundary-code-db-schema",
+      "label": "User Credentials & Roles Schema",
+      "subtitle": "Upper Layer: Component (Zoomed In) · Database · PostgreSQL Tables & RLS",
+      "description": "Stores customer identity records, bcrypt password hashes, and role assignments.",
+      "upperLayer": "component",
+      "sourceNodeId": "db-credentials-schema",
+      "position": { "x": 650, "y": 355 },
+      "size": { "width": 560, "height": 265 }
+    }
+  ],
+  "nodes": [
     {
       "id": "security-service",
       "type": "c4Node",
-      "position": { "x": 40, "y": 40 },
+      "parentId": "boundary-code-security",
+      "extent": "parent",
+      "position": { "x": 35, "y": 78 },
       "data": {
         "kind": "codeInterface",
         "name": "SecurityService",
         "technology": "interface",
         "parentNodeId": "security",
-        "description": "Sign-in, password change, and session operations."
+        "description": "Sign-in, password change, and session token verification operations."
       }
     },
     {
-      "id": "user-repository",
+      "id": "security-service-impl",
       "type": "c4Node",
-      "position": { "x": 640, "y": 40 },
+      "parentId": "boundary-code-security",
+      "extent": "parent",
+      "position": { "x": 295, "y": 78 },
       "data": {
         "kind": "codeClass",
-        "name": "UserRepository",
-        "technology": "class, JDBC",
+        "name": "SecurityServiceImpl",
+        "technology": "class",
         "parentNodeId": "security",
-        "description": "Data access for User records."
-      }
-    },
-    {
-      "id": "user",
-      "type": "c4Node",
-      "position": { "x": 640, "y": 240 },
-      "data": {
-        "kind": "codeClass",
-        "name": "User",
-        "technology": "class, entity",
-        "parentNodeId": "security",
-        "description": "A registered Internet banking user."
+        "description": "Default Spring bean implementation of SecurityService."
       }
     },
     {
       "id": "role",
       "type": "c4Node",
-      "position": { "x": 360, "y": 240 },
+      "parentId": "boundary-code-security",
+      "extent": "parent",
+      "position": { "x": 35, "y": 255 },
       "data": {
         "kind": "codeEnum",
         "name": "Role",
         "technology": "enum",
         "parentNodeId": "security",
-        "description": "Authorisation role assigned to a user."
+        "description": "Authorisation role assigned to a user (VIEWER, EDITOR, ADMIN)."
+      }
+    },
+    {
+      "id": "user-repository",
+      "type": "c4Node",
+      "parentId": "boundary-code-security",
+      "extent": "parent",
+      "position": { "x": 295, "y": 255 },
+      "data": {
+        "kind": "codeClass",
+        "name": "UserRepository",
+        "technology": "class, JDBC",
+        "parentNodeId": "security",
+        "description": "Data access repository for querying and persisting User records."
+      }
+    },
+    {
+      "id": "mainframe-client-interface",
+      "type": "c4Node",
+      "parentId": "boundary-code-facade",
+      "extent": "parent",
+      "position": { "x": 35, "y": 78 },
+      "data": {
+        "kind": "codeInterface",
+        "name": "MainframeLedgerClient",
+        "technology": "interface",
+        "parentNodeId": "mainframe-facade",
+        "description": "Contract for fetching account balances and submitting XML payment envelopes."
+      }
+    },
+    {
+      "id": "xml-mainframe-adapter",
+      "type": "c4Node",
+      "parentId": "boundary-code-facade",
+      "extent": "parent",
+      "position": { "x": 295, "y": 78 },
+      "data": {
+        "kind": "codeClass",
+        "name": "XmlMainframeAdapter",
+        "technology": "class, XML/HTTPS",
+        "parentNodeId": "mainframe-facade",
+        "description": "Marshals domain requests into mainframe XML payloads with retry policies."
+      }
+    },
+    {
+      "id": "user",
+      "type": "c4Node",
+      "parentId": "boundary-code-db-schema",
+      "extent": "parent",
+      "position": { "x": 35, "y": 78 },
+      "data": {
+        "kind": "codeClass",
+        "name": "UserEntity",
+        "technology": "class, JPA Entity",
+        "parentNodeId": "db-credentials-schema",
+        "description": "Relational entity mapping to the `users` table and credential columns."
+      }
+    },
+    {
+      "id": "rls-policy-enum",
+      "type": "c4Node",
+      "parentId": "boundary-code-db-schema",
+      "extent": "parent",
+      "position": { "x": 295, "y": 78 },
+      "data": {
+        "kind": "codeEnum",
+        "name": "AuditActionType",
+        "technology": "enum / SQL DDL",
+        "parentNodeId": "db-credentials-schema",
+        "description": "Enumerates tracked security audit actions (LOGIN_OK, LOGIN_FAIL, PASSWORD_CHANGE)."
       }
     }
   ],
   "edges": [
     { "id": "e-impl-interface", "source": "security-service-impl", "target": "security-service", "type": "c4Edge", "label": "implements", "data": { "technology": null } },
-    { "id": "e-impl-repo", "source": "security-service-impl", "target": "user-repository", "type": "c4Edge", "label": "uses", "data": { "technology": null } },
-    { "id": "e-repo-user", "source": "user-repository", "target": "user", "type": "c4Edge", "label": "returns / persists", "data": { "technology": null } },
-    { "id": "e-impl-role", "source": "security-service-impl", "target": "role", "type": "c4Edge", "label": "checks", "data": { "technology": null } }
+    { "id": "e-impl-role", "source": "security-service-impl", "target": "role", "type": "c4Edge", "label": "checks", "data": { "technology": null } },
+    { "id": "e-impl-repo", "source": "security-service-impl", "target": "user-repository", "type": "c4Edge", "label": "queries via", "data": { "technology": null } },
+    { "id": "e-repo-user", "source": "user-repository", "target": "user", "type": "c4Edge", "label": "hydrates / persists", "data": { "technology": "JDBC" } },
+    { "id": "e-adapter-client", "source": "xml-mainframe-adapter", "target": "mainframe-client-interface", "type": "c4Edge", "label": "implements", "data": { "technology": null } },
+    { "id": "e-user-audit", "source": "user", "target": "rls-policy-enum", "type": "c4Edge", "label": "records event with", "data": { "technology": null } }
   ]
 }

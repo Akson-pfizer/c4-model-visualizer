@@ -23,7 +23,25 @@ export const LAYERS = [
 
 export const LAYER_ORDER = ['context', 'container', 'component', 'code'];
 
-function boundaryToNode(boundary) {
+export function getNextLayerId(currentLayerId) {
+  const idx = LAYER_ORDER.indexOf(currentLayerId);
+  if (idx === -1 || idx >= LAYER_ORDER.length - 1) return null;
+  return LAYER_ORDER[idx + 1];
+}
+
+export function getPrevLayerId(currentLayerId) {
+  const idx = LAYER_ORDER.indexOf(currentLayerId);
+  if (idx <= 0) return null;
+  return LAYER_ORDER[idx - 1];
+}
+
+function boundaryToNode(boundary, currentLayerId) {
+  const fallbackUpperLayer = getPrevLayerId(currentLayerId);
+  const targetUpperLayer =
+    boundary.upperLayer && boundary.upperLayer !== currentLayerId
+      ? boundary.upperLayer
+      : fallbackUpperLayer;
+
   return {
     id: boundary.id,
     type: 'c4Boundary',
@@ -33,18 +51,98 @@ function boundaryToNode(boundary) {
     selectable: false,
     draggable: false,
     zIndex: 0,
-    data: { label: boundary.label }
+    data: {
+      label: boundary.label,
+      subtitle: boundary.subtitle ?? null,
+      description: boundary.description ?? null,
+      upperLayer: boundary.upperLayer ?? fallbackUpperLayer ?? null,
+      targetUpperLayer: targetUpperLayer ?? null,
+      sourceNodeId: boundary.sourceNodeId ?? null
+    }
   };
 }
 
-export function adaptRawLayer(raw) {
-  const boundaryNodes = (raw.boundaries ?? []).map(boundaryToNode);
-  const elementNodes = (raw.nodes ?? []).map((node) => ({
+export function adaptRawLayer(raw, focusParentId = null) {
+  const allBoundaries = raw.boundaries ?? [];
+  const allRawNodes = raw.nodes ?? [];
+  const nextLayer = getNextLayerId(raw.layer);
+
+  // Check if focusParentId matches any child nodes or carried-forward boundaries in this layer
+  let matchingChildIds = new Set();
+  let matchingBoundaryIds = new Set();
+
+  if (focusParentId) {
+    for (const b of allBoundaries) {
+      if (b.sourceNodeId === focusParentId || b.id === `boundary-${focusParentId}`) {
+        matchingBoundaryIds.add(b.id);
+      }
+    }
+    for (const n of allRawNodes) {
+      if (
+        n.data?.parentNodeId === focusParentId ||
+        (n.parentId && matchingBoundaryIds.has(n.parentId))
+      ) {
+        matchingChildIds.add(n.id);
+        if (n.parentId) matchingBoundaryIds.add(n.parentId);
+      }
+    }
+  }
+
+  const hasFocusedSubset =
+    Boolean(focusParentId) && (matchingChildIds.size > 0 || matchingBoundaryIds.size > 0);
+
+  // Include external/actor neighbor nodes connected by edges to the focused subset
+  if (hasFocusedSubset) {
+    const rawById = new Map(allRawNodes.map((n) => [n.id, n]));
+    for (const edge of raw.edges ?? []) {
+      if (matchingChildIds.has(edge.source) || matchingChildIds.has(edge.target)) {
+        const srcNode = rawById.get(edge.source);
+        const tgtNode = rawById.get(edge.target);
+        if (srcNode && !srcNode.parentId) matchingChildIds.add(edge.source);
+        if (tgtNode && !tgtNode.parentId) matchingChildIds.add(edge.target);
+      }
+    }
+  }
+
+  const filteredBoundaries = hasFocusedSubset
+    ? allBoundaries.filter((b) => matchingBoundaryIds.has(b.id))
+    : allBoundaries;
+  const filteredRawNodes = hasFocusedSubset
+    ? allRawNodes.filter(
+        (n) => matchingChildIds.has(n.id) || (n.parentId && matchingBoundaryIds.has(n.parentId))
+      )
+    : allRawNodes;
+
+  // Reflow boundary positions when showing a single focused boundary so it sits cleanly at top-left
+  const normalizedBoundaries =
+    hasFocusedSubset && filteredBoundaries.length === 1
+      ? [{ ...filteredBoundaries[0], position: { x: 260, y: 40 } }]
+      : filteredBoundaries;
+
+  const boundaryNodes = normalizedBoundaries.map((b) => {
+    const bNode = boundaryToNode(b, raw.layer);
+    if (hasFocusedSubset) {
+      bNode.data = { ...bNode.data, focused: true };
+    }
+    return bNode;
+  });
+
+  const allowedNodeIds = new Set(filteredRawNodes.map((n) => n.id));
+  const elementNodes = filteredRawNodes.map((node) => ({
     ...node,
     width: 220,
     height: 150,
-    zIndex: 1
+    zIndex: 1,
+    data: {
+      ...node.data,
+      nextLayer,
+      focusedChild: hasFocusedSubset && node.data?.parentNodeId === focusParentId
+    }
   }));
+
+  const filteredEdges = (raw.edges ?? []).filter(
+    (e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target)
+  );
 
   return {
     layer: raw.layer,
@@ -53,18 +151,19 @@ export function adaptRawLayer(raw) {
     description: raw.description,
     note: raw.note ?? null,
     legend: raw.legend ?? [],
+    focusParentId: hasFocusedSubset ? focusParentId : null,
     nodes: [...boundaryNodes, ...elementNodes],
     elementNodes,
-    edges: raw.edges ?? []
+    edges: filteredEdges
   };
 }
 
-export function getLayer(layerId, rawByLayer = DEFAULT_RAW_BY_LAYER) {
+export function getLayer(layerId, rawByLayer = DEFAULT_RAW_BY_LAYER, focusParentId = null) {
   const raw = rawByLayer[layerId] ?? DEFAULT_RAW_BY_LAYER[layerId];
   if (!raw) {
     throw new Error(`Unknown C4 layer: ${layerId}`);
   }
-  return adaptRawLayer(raw);
+  return adaptRawLayer(raw, focusParentId);
 }
 
 /**

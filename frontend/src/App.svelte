@@ -8,14 +8,19 @@
   import HierarchyTreeCanvas from './lib/components/HierarchyTreeCanvas.svelte';
   import DetailPanel from './lib/components/DetailPanel.svelte';
   import PfizerLoader from './lib/components/PfizerLoader.svelte';
+  import KeyboardShortcutsModal from './lib/components/KeyboardShortcutsModal.svelte';
   import BuildRepo from './lib/components/build/BuildRepo.svelte';
   import CodeAnalysisView from './lib/components/analysis/CodeAnalysisView.svelte';
   import { formatFriendlyError } from './lib/analysisCatalog.js';
   import {
     DEFAULT_RAW_BY_LAYER,
+    LAYER_ORDER,
     buildHierarchyFromLayers,
-    getLayer
+    getLayer,
+    getNextLayerId,
+    getPrevLayerId
   } from './lib/diagramData.js';
+  import { matchShortcutCommand } from './lib/keyboardShortcuts.js';
 
   const TABS = [
     { id: 'read', label: 'Visualizer' },
@@ -23,8 +28,6 @@
     { id: 'analysis', label: 'Code Analysis' }
   ];
 
-  // Long enough for one full turn of the spinning "z", so the loader
-  // doesn't flicker off before the diagram has fitted.
   const MIN_LOADER_MS = 900;
 
   let tab = $state('read');
@@ -34,9 +37,17 @@
   let selectedLayerId = $state('context');
   let viewMode = $state('layer'); // 'layer' | 'tree'
   let selectedNode = $state(null);
+  let focusedParentNode = $state(null);
   let loading = $state(true);
   let loadGeneration = $state(0);
   let loaderStartedAt = Date.now();
+
+  // Undo / Redo navigation stack for Visualizer layer & drill-down transitions
+  let navPastStack = $state.raw([]);
+  let navFutureStack = $state.raw([]);
+  let shortcutsOpen = $state(false);
+  let shortcutFeedback = $state(null);
+  let buildRepoRef = $state();
 
   // Repository source & multi-agent model state
   let activeSource = $state('');
@@ -48,12 +59,11 @@
   let customHierarchy = $state(null);
   let sourceRevision = $state(0);
 
-  let layer = $derived(getLayer(selectedLayerId, rawByLayer));
+  let layer = $derived(
+    getLayer(selectedLayerId, rawByLayer, focusedParentNode?.id ?? null)
+  );
   let hierarchy = $derived(customHierarchy ?? buildHierarchyFromLayers(rawByLayer));
 
-  /**
-   * Flat guard-clause helper replacing nested ternaries (SonarQube S3358).
-   */
   function getLoaderLabel(isAnalyzing, currentViewMode, layerTitle) {
     if (isAnalyzing) {
       return 'Running Manager, Supervisor & 4 Layer Subagents';
@@ -68,6 +78,65 @@
 
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let hideTimer;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let feedbackTimer;
+
+  function showShortcutBadge(message) {
+    if (!message) return;
+    shortcutFeedback = message;
+    clearTimeout(feedbackTimer);
+    feedbackTimer = setTimeout(() => {
+      shortcutFeedback = null;
+    }, 1800);
+  }
+
+  function pushNavHistory() {
+    const snap = {
+      selectedLayerId,
+      viewMode,
+      focusedParentNode: focusedParentNode ? { ...focusedParentNode } : null
+    };
+    navPastStack = [...navPastStack.slice(-29), snap];
+    navFutureStack = [];
+  }
+
+  function undoNavigation() {
+    if (navPastStack.length === 0) return false;
+    const current = {
+      selectedLayerId,
+      viewMode,
+      focusedParentNode: focusedParentNode ? { ...focusedParentNode } : null
+    };
+    const prev = navPastStack[navPastStack.length - 1];
+    navPastStack = navPastStack.slice(0, -1);
+    navFutureStack = [...navFutureStack, current];
+
+    triggerLoader();
+    selectedLayerId = prev.selectedLayerId;
+    viewMode = prev.viewMode;
+    focusedParentNode = prev.focusedParentNode;
+    selectedNode = null;
+    return true;
+  }
+
+  function redoNavigation() {
+    if (navFutureStack.length === 0) return false;
+    const current = {
+      selectedLayerId,
+      viewMode,
+      focusedParentNode: focusedParentNode ? { ...focusedParentNode } : null
+    };
+    const next = navFutureStack[navFutureStack.length - 1];
+    navFutureStack = navFutureStack.slice(0, -1);
+    navPastStack = [...navPastStack, current];
+
+    triggerLoader();
+    selectedLayerId = next.selectedLayerId;
+    viewMode = next.viewMode;
+    focusedParentNode = next.focusedParentNode;
+    selectedNode = null;
+    return true;
+  }
 
   function triggerLoader() {
     clearTimeout(hideTimer);
@@ -77,18 +146,181 @@
   }
 
   function handleLayerChange(id) {
-    if (id === selectedLayerId && viewMode === 'layer') return;
+    if (id === selectedLayerId && viewMode === 'layer' && !focusedParentNode) return;
+    pushNavHistory();
     triggerLoader();
     viewMode = 'layer';
     selectedLayerId = id;
+    focusedParentNode = null;
     selectedNode = null;
   }
 
   function handleViewModeChange(mode) {
     if (mode === viewMode) return;
+    pushNavHistory();
     triggerLoader();
     viewMode = mode;
     selectedNode = null;
+  }
+
+  function handleNodeDoubleClick(node) {
+    if (!node) return;
+    const sourceLayer = node.data?.layer || selectedLayerId;
+    const nextLayerId = getNextLayerId(sourceLayer);
+    if (!nextLayerId) return;
+
+    pushNavHistory();
+    triggerLoader();
+    viewMode = 'layer';
+    selectedLayerId = nextLayerId;
+    focusedParentNode = {
+      id: node.data?.rawId || node.id,
+      name: node.data?.name || node.id,
+      layer: sourceLayer
+    };
+    selectedNode = null;
+  }
+
+  function clearFocusedDrillDown() {
+    if (!focusedParentNode) return;
+    pushNavHistory();
+    triggerLoader();
+    focusedParentNode = null;
+    selectedNode = null;
+  }
+
+  function handleBoundaryClick(boundaryNode) {
+    if (!boundaryNode) return;
+    const targetUpperLayer =
+      boundaryNode.data?.targetUpperLayer || getPrevLayerId(selectedLayerId);
+    if (!targetUpperLayer || targetUpperLayer === selectedLayerId) return;
+
+    const sourceNodeId = boundaryNode.data?.sourceNodeId ?? null;
+    const upperLayerData = getLayer(targetUpperLayer, rawByLayer, null);
+    const matchingUpperNode = sourceNodeId
+      ? upperLayerData.elementNodes.find((n) => n.id === sourceNodeId)
+      : null;
+
+    pushNavHistory();
+    triggerLoader();
+    viewMode = 'layer';
+    selectedLayerId = targetUpperLayer;
+    focusedParentNode = null;
+    selectedNode = matchingUpperNode ?? null;
+  }
+
+  function copySelectedNodeSummary() {
+    if (!selectedNode) return false;
+    const summary = {
+      id: selectedNode.id,
+      layer: selectedLayerId,
+      name: selectedNode.data?.name,
+      kind: selectedNode.data?.kind,
+      technology: selectedNode.data?.technology,
+      description: selectedNode.data?.description
+    };
+    try {
+      navigator.clipboard?.writeText(JSON.stringify(summary, null, 2));
+    } catch {
+      // Clipboard API fallback
+    }
+    return true;
+  }
+
+  function handleGlobalKeydown(event) {
+    const cmd = matchShortcutCommand(event);
+    if (!cmd) return;
+
+    if (cmd === 'toggle-help') {
+      event.preventDefault();
+      shortcutsOpen = !shortcutsOpen;
+      return;
+    }
+
+    if (shortcutsOpen) {
+      if (cmd === 'escape') {
+        shortcutsOpen = false;
+      }
+      return;
+    }
+
+    // Layer number keys 1..4 work in Visualizer & Developer tabs
+    if (cmd.startsWith('layer-') && ['1', '2', '3', '4'].includes(cmd.slice(-1))) {
+      const idx = Number(cmd.slice(-1)) - 1;
+      const targetLayer = LAYER_ORDER[idx];
+      if (targetLayer && (tab === 'read' || tab === 'build')) {
+        event.preventDefault();
+        handleLayerChange(targetLayer);
+        showShortcutBadge(`Switched to ${targetLayer} layer`);
+      }
+      return;
+    }
+
+    if (cmd === 'layer-up' && (tab === 'read' || tab === 'build')) {
+      const prevLayer = getPrevLayerId(selectedLayerId);
+      if (prevLayer) {
+        event.preventDefault();
+        handleLayerChange(prevLayer);
+        showShortcutBadge(`Up to ${prevLayer} layer`);
+      }
+      return;
+    }
+
+    if (cmd === 'layer-down' && (tab === 'read' || tab === 'build')) {
+      const nextLayer = getNextLayerId(selectedLayerId);
+      if (nextLayer) {
+        event.preventDefault();
+        handleLayerChange(nextLayer);
+        showShortcutBadge(`Down to ${nextLayer} layer`);
+      }
+      return;
+    }
+
+    if (tab === 'build') {
+      const handledMsg = buildRepoRef?.handleShortcutCommand?.(cmd);
+      if (handledMsg) {
+        event.preventDefault();
+        showShortcutBadge(handledMsg);
+      }
+      return;
+    }
+
+    if (tab === 'read') {
+      if (cmd === 'undo') {
+        if (undoNavigation()) {
+          event.preventDefault();
+          showShortcutBadge('Undid layer navigation (⌘Z / Ctrl+Z)');
+        }
+      } else if (cmd === 'redo') {
+        if (redoNavigation()) {
+          event.preventDefault();
+          showShortcutBadge('Redid layer navigation (⌘Y / Ctrl+Y)');
+        }
+      } else if (cmd === 'copy') {
+        if (copySelectedNodeSummary()) {
+          event.preventDefault();
+          showShortcutBadge(`Copied "${selectedNode.data?.name}" details (⌘C / Ctrl+C)`);
+        }
+      } else if (cmd === 'drill-down' && selectedNode) {
+        event.preventDefault();
+        handleNodeDoubleClick(selectedNode);
+        showShortcutBadge(`Zoomed into ${selectedNode.data?.name}`);
+      } else if (cmd === 'toggle-tree') {
+        event.preventDefault();
+        handleViewModeChange(viewMode === 'tree' ? 'layer' : 'tree');
+        showShortcutBadge(`Switched to ${viewMode === 'tree' ? 'Tree' : 'Layer'} view`);
+      } else if (cmd === 'escape') {
+        if (selectedNode) {
+          event.preventDefault();
+          selectedNode = null;
+          showShortcutBadge('Cleared selection (Esc)');
+        } else if (focusedParentNode) {
+          event.preventDefault();
+          clearFocusedDrillDown();
+          showShortcutBadge('Reset zoomed-in focus (Esc)');
+        }
+      }
+    }
   }
 
   function handleDiagramReady(generation) {
@@ -132,7 +364,10 @@
       activeSource = payload.source;
       activeRepoName = `${payload.repo_name} (${payload.source_type})`;
       sourceRevision += 1;
+      focusedParentNode = null;
       selectedNode = null;
+      navPastStack = [];
+      navFutureStack = [];
     } catch (err) {
       sourceError = formatFriendlyError(err, 'Repository Analysis');
       loading = false;
@@ -150,7 +385,10 @@
     activeSource = '';
     activeRepoName = 'Internet Banking System (Demo)';
     sourceRevision += 1;
+    focusedParentNode = null;
     selectedNode = null;
+    navPastStack = [];
+    navFutureStack = [];
   }
 
   function selectTab(id, shouldFocus = false) {
@@ -174,10 +412,15 @@
     }
   }
 
-  onDestroy(() => clearTimeout(hideTimer));
+  onDestroy(() => {
+    clearTimeout(hideTimer);
+    clearTimeout(feedbackTimer);
+  });
 </script>
 
-<AppHeader />
+<svelte:window onkeydown={handleGlobalKeydown} />
+
+<AppHeader onOpenShortcuts={() => (shortcutsOpen = true)} />
 
 <SourceBar
   source={activeSource}
@@ -189,23 +432,31 @@
   onResetDemo={resetToDemoSource}
 />
 
-<div class="app-tabs" role="tablist" aria-label="Repository mode">
-  {#each TABS as item (item.id)}
-    <button
-      type="button"
-      role="tab"
-      id="tab-{item.id}"
-      class="app-tabs__tab"
-      aria-selected={tab === item.id}
-      aria-controls="panel-{item.id}"
-      tabindex={tab === item.id ? 0 : -1}
-      bind:this={tabButtons[item.id]}
-      onclick={() => selectTab(item.id)}
-      onkeydown={onTabKeydown}
-    >
-      {item.label}
-    </button>
-  {/each}
+<div class="app-tabs-bar">
+  <div class="app-tabs" role="tablist" aria-label="Repository mode">
+    {#each TABS as item (item.id)}
+      <button
+        type="button"
+        role="tab"
+        id="tab-{item.id}"
+        class="app-tabs__tab"
+        aria-selected={tab === item.id}
+        aria-controls="panel-{item.id}"
+        tabindex={tab === item.id ? 0 : -1}
+        bind:this={tabButtons[item.id]}
+        onclick={() => selectTab(item.id)}
+        onkeydown={onTabKeydown}
+      >
+        {item.label}
+      </button>
+    {/each}
+  </div>
+
+  {#if shortcutFeedback}
+    <output class="shortcut-toast" aria-live="polite">
+      ⌨ {shortcutFeedback}
+    </output>
+  {/if}
 </div>
 
 <div class="app-panels">
@@ -218,11 +469,47 @@
               <p class="read-area__hint">
                 {#if viewMode === 'tree'}
                   <strong>Hierarchy Tree View</strong> · Context → Container → Component → Code Class Modules
+                {:else if focusedParentNode && layer.focusParentId}
+                  <strong>{layer.title} layer</strong> · Zoomed into <strong>{focusedParentNode.name}</strong> ({focusedParentNode.layer})
                 {:else}
                   <strong>{layer.title} layer</strong> · {layer.subtitle}
                 {/if}
               </p>
               <div class="read-area__actions">
+                <div class="nav-history-strip" role="group" aria-label="Layer navigation undo and redo">
+                  <button
+                    type="button"
+                    class="nav-history-btn"
+                    disabled={navPastStack.length === 0}
+                    title="Undo layer navigation (⌘Z / Ctrl+Z)"
+                    onclick={() => {
+                      if (undoNavigation()) showShortcutBadge('Undid layer navigation');
+                    }}
+                  >
+                    ↶ Undo
+                  </button>
+                  <button
+                    type="button"
+                    class="nav-history-btn"
+                    disabled={navFutureStack.length === 0}
+                    title="Redo layer navigation (⌘Y / Ctrl+Y)"
+                    onclick={() => {
+                      if (redoNavigation()) showShortcutBadge('Redid layer navigation');
+                    }}
+                  >
+                    ↷ Redo
+                  </button>
+                </div>
+                {#if focusedParentNode && layer.focusParentId && viewMode === 'layer'}
+                  <button
+                    type="button"
+                    class="focus-reset-btn"
+                    onclick={clearFocusedDrillDown}
+                    title="Show all elements in the {layer.title} layer (Esc)"
+                  >
+                    ✕ Show All {layer.title}s
+                  </button>
+                {/if}
                 <div class="view-toggle" role="group" aria-label="Diagram visualization mode">
                   <button
                     type="button"
@@ -252,12 +539,13 @@
               </div>
             </header>
             <div class="read-area__canvas">
-              {#key `${selectedLayerId}-${viewMode}-${sourceRevision}`}
+              {#key `${selectedLayerId}-${viewMode}-${sourceRevision}-${focusedParentNode?.id ?? 'all'}`}
                 {#if viewMode === 'tree'}
                   <HierarchyTreeCanvas
                     {hierarchy}
                     {loadGeneration}
                     onNodeSelect={handleNodeSelect}
+                    onNodeDoubleClick={handleNodeDoubleClick}
                     onReady={handleDiagramReady}
                   />
                 {:else}
@@ -265,13 +553,21 @@
                     {layer}
                     {loadGeneration}
                     onNodeSelect={handleNodeSelect}
+                    onNodeDoubleClick={handleNodeDoubleClick}
+                    onBoundaryClick={handleBoundaryClick}
                     onReady={handleDiagramReady}
                   />
                 {/if}
               {/key}
             </div>
           </section>
-          <DetailPanel {layer} {selectedNode} onClose={() => (selectedNode = null)} />
+          <DetailPanel
+            {layer}
+            {selectedNode}
+            onDrillDown={handleNodeDoubleClick}
+            onNavigateUpper={handleBoundaryClick}
+            onClose={() => (selectedNode = null)}
+          />
         </div>
         {#if loading}
           <div class="layer-loader" out:fade={{ duration: 180 }}>
@@ -284,6 +580,7 @@
 
   <div class="app-panel" role="tabpanel" id="panel-build" aria-labelledby="tab-build" hidden={tab !== 'build'}>
     <BuildRepo
+      bind:this={buildRepoRef}
       active={tab === 'build'}
       layerId={selectedLayerId}
       {rawByLayer}
@@ -301,13 +598,21 @@
   </div>
 </div>
 
+<KeyboardShortcutsModal open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
+
 <style>
-  .app-tabs {
+  .app-tabs-bar {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    justify-content: space-between;
     padding: 0 24px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+  }
+
+  .app-tabs {
+    display: flex;
+    gap: 4px;
   }
 
   .app-tabs__tab {
@@ -325,6 +630,19 @@
   .app-tabs__tab[aria-selected='true'] {
     color: var(--blue-700);
     border-bottom-color: var(--blue-600);
+  }
+
+  .shortcut-toast {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--blue-50);
+    border: 1px solid var(--blue-200);
+    color: var(--blue-700);
+    font-size: 11.5px;
+    font-weight: 700;
   }
 
   .app-panels {
@@ -388,6 +706,52 @@
     align-items: center;
     gap: 10px;
     flex-shrink: 0;
+  }
+
+  .nav-history-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+  }
+
+  .nav-history-btn {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .nav-history-btn:hover:not(:disabled) {
+    background: var(--surface);
+    color: var(--blue-700);
+  }
+
+  .nav-history-btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+  }
+
+  .focus-reset-btn {
+    padding: 5px 10px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--blue-700);
+    background: var(--accent-soft);
+    border: 1px solid var(--blue-200);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .focus-reset-btn:hover {
+    background: var(--blue-200);
   }
 
   .view-toggle {

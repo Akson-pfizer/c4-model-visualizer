@@ -1,3 +1,7 @@
+<script>
+  let { onOpenShortcuts } = $props();
+</script>
+
 <header class="app-header">
   <div class="app-header__brand">
     <svg class="app-header__mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -9,11 +13,22 @@
     </svg>
     <div class="app-header__title">
       <span class="app-header__title-main">C4 modelling</span>
-      <span class="app-header__title-sub">“Design is the silent ambassador of thought; code is merely its echo.”</span>
+      <span class="app-header__title-sub">
+        “Design is the silent ambassador of thought; code is merely its echo.”
+      </span>
     </div>
   </div>
 
   <div class="app-header__brand app-header__brand--right">
+    <button
+      type="button"
+      class="shortcuts-trigger"
+      title="Keyboard Shortcuts for macOS (⌘) & Windows (Ctrl) — press ? or Ctrl+/"
+      onclick={() => onOpenShortcuts?.()}
+    >
+      <span class="shortcuts-trigger__kbd">⌘ / Ctrl</span>
+      <span>Shortcuts (?)</span>
+    </button>
     <!-- Placeholder wordmark: swap for the official Pfizer logo asset from internal brand resources. -->
     <span class="pfizer-mark" aria-label="Pfizer">
       <span class="pfizer-mark__dot" aria-hidden="true"></span>
@@ -45,6 +60,7 @@
 
   .app-header__brand--right {
     justify-content: flex-end;
+    gap: 14px;
   }
 
   .app-header__mark {
@@ -69,6 +85,36 @@
     font-size: 11.5px;
     font-style: italic;
     color: var(--text-muted);
+  }
+
+  .shortcuts-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-muted);
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .shortcuts-trigger:hover {
+    background: var(--blue-50);
+    border-color: var(--blue-200);
+    color: var(--blue-700);
+  }
+
+  .shortcuts-trigger__kbd {
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--blue-700);
   }
 
   .pfizer-mark {
