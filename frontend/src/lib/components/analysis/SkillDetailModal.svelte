@@ -15,10 +15,11 @@
   let dialogEl = $state();
 
   $effect(() => {
+    const isOpen = Boolean(open);
     if (!dialogEl) return;
-    if (open && !dialogEl.open) {
+    if (isOpen && !dialogEl.open) {
       dialogEl.showModal();
-    } else if (!open && dialogEl.open) {
+    } else if (!isOpen && dialogEl.open) {
       dialogEl.close();
     }
   });
