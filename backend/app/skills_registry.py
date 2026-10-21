@@ -1045,7 +1045,7 @@ def skill_run_code_and_ux_analysis(source: str = "..") -> dict[str, Any]:
             "section": "7. Sandbox Execution & Self-Healing Resilience",
             "tag": "measured",
             "value": f"Passed in {sandbox_res['execution_time_ms']} ms · 100% parentNodeId repair coverage",
-            "business": "Guarantees the visualizer and documentation generator work even when LM Studio is offline.",
+            "business": "Guarantees the visualizer and documentation generator work even when Pfizer LLMHub is unreachable.",
             "tech": "Verified via skill_execute_sandbox_with_dummy_data() in isolated tempfile workspace.",
             "measurement_plan": "Measured live in isolated sandbox container.",
         },

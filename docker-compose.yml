@@ -6,12 +6,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - LM_STUDIO_BASE_URL=${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
-      - LM_STUDIO_API_KEY=${LM_STUDIO_API_KEY:-lm-studio}
-      - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-prism-ml/bonsai-27b}
+      - LLMHUB_API_KEY=${LLMHUB_API_KEY:-}
+      - LLMHUB_BASE_URL=${LLMHUB_BASE_URL:-https://llmhub.platforms.pfizer/v1}
+      - LLMHUB_MODEL_POWERFUL=${LLMHUB_MODEL_POWERFUL:-gpt-4o}
+      - LLMHUB_MODEL_MEDIUM=${LLMHUB_MODEL_MEDIUM:-gpt-4.1-mini}
       - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/config:/app/config:ro
     restart: unless-stopped
 
   frontend:

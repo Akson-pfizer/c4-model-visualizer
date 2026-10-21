@@ -226,7 +226,7 @@ class DocumentationAgent:
                 summary=(
                     "Concise overview of the C4 Modelling platform showing the Svelte 5 SPA "
                     "(Visualizer & Developer tabs), FastAPI Multi-Agent Backend (Manager, Supervisor, "
-                    "4 C4 Subagents, Documentation Agent), Shared Skills Registry, and LM Studio / GitHub integrations."
+                    "4 C4 Subagents, Documentation Agent), Shared Skills Registry, and Pfizer LLMHub / GitHub integrations."
                 ),
                 mermaid_code="""flowchart LR
     User(["Architect / Developer"])
@@ -243,7 +243,7 @@ class DocumentationAgent:
         Skills["Shared Skills Registry<br/>(7 Reusable Skills)"]
     end
     subgraph Ext["External Systems"]
-        LMS["LM Studio Server<br/>(OpenAI API :1234)"]
+        LMS["Pfizer LLMHub<br/>(OpenAI-compatible /v1)"]
         GH["GitHub / Local FS<br/>(Source Repos)"]
         Conf["Confluence Pages<br/>(MMD / SVG / PNG)"]
     end
@@ -267,7 +267,7 @@ class DocumentationAgent:
                     {"id": "Doc", "label": "DocAgent (c4-doc-agent)", "sub": "Mermaid + SVG + PNG Export", "x": 520, "y": 325, "color": "#0f766e"},
                     {"id": "Subs", "label": "4 Specialist Subagents", "sub": "Context / Container / Comp / Code", "x": 790, "y": 140, "color": "#2563eb"},
                     {"id": "Skills", "label": "Shared Skills Registry", "sub": "read | draw | sandbox | metrics", "x": 790, "y": 275, "color": "#4f46e5"},
-                    {"id": "Ext", "label": "LM Studio & Confluence", "sub": "Local LLM + PNG/MMD Docs", "x": 1040, "y": 210, "color": "#475569"},
+                    {"id": "Ext", "label": "LLMHub & Confluence", "sub": "Pfizer LLM + PNG/MMD Docs", "x": 1040, "y": 210, "color": "#475569"},
                 ],
                 svg_edges=[
                     ("User", "FE", "HTTPS / UI"),
@@ -429,7 +429,7 @@ class DocumentationAgent:
     Validate -- "Yes (Local)" --> Resolve["Resolve Local Filesystem Path"]
     Clone --> Scan["Scan Source Tree & Build Bounded Context"]
     Resolve --> Scan
-    Scan --> CheckLLM{"LM Studio Reachable<br/>& use_llm=true?"}
+    Scan --> CheckLLM{"LLMHub Reachable<br/>& use_llm=true?"}
     CheckLLM -- "Yes" --> PromptLLM["Prompt Specialist Subagent (Strict JSON)"]
     PromptLLM --> SchemaOK{"Pydantic Schema &<br/>Edge IDs Valid?"}
     SchemaOK -- "No (Retry 1x)" --> Repair["Send build_repair_prompt() to LLM"]
@@ -445,7 +445,7 @@ class DocumentationAgent:
                 svg_nodes=[
                     {"id": "S1", "label": "1. Validate Source", "sub": "Local Path vs GitHub URL", "x": 60, "y": 110, "color": "#1e3a8a"},
                     {"id": "S2", "label": "2. Ingest & Scan", "sub": "git clone / build_repo_context", "x": 310, "y": 110, "color": "#1d4ed8"},
-                    {"id": "S3", "label": "3. LLM or AST Extract", "sub": "LM Studio + 1x Repair Retry", "x": 560, "y": 110, "color": "#2563eb"},
+                    {"id": "S3", "label": "3. LLM or AST Extract", "sub": "LLMHub + 1x Repair Retry", "x": 560, "y": 110, "color": "#2563eb"},
                     {"id": "S4", "label": "4. Enforce Parent Links", "sub": "_ensure_parent_links()", "x": 810, "y": 110, "color": "#4338ca"},
                     {"id": "S5", "label": "5. Build 4-Tier Tree", "sub": "Context->Container->Component->Code", "x": 310, "y": 280, "color": "#0f766e"},
                     {"id": "S6", "label": "6. Sandbox & Self-Review", "sub": "Verify Metrics & Export PNG/MMD", "x": 680, "y": 280, "color": "#15803d"},
@@ -465,7 +465,7 @@ class DocumentationAgent:
                 summary=(
                     "Docker Compose multi-container topology (`c4-model-visualizer/docker-compose.yml`) "
                     "connecting the Nginx/Svelte `frontend` container (`:8080`), FastAPI/Uvicorn `backend` "
-                    "container (`:8000` with `git`), and host LM Studio inference server (`host.docker.internal:1234`)."
+                    "container (`:8000` with `git`), and Pfizer LLMHub (`https://llmhub.platforms.pfizer/v1`)."
                 ),
                 mermaid_code="""flowchart LR
     subgraph ClientHost["Client Workstation"]
@@ -483,7 +483,7 @@ class DocumentationAgent:
     end
 
     subgraph HostOS["Host Machine / External"]
-        LMStudio["LM Studio Local Server<br/>host.docker.internal:1234/v1"]
+        LMStudio["Pfizer LLMHub<br/>llmhub.platforms.pfizer/v1"]
         GitHubCloud["GitHub.com<br/>HTTPS Git Remotes"]
     end
 
@@ -496,7 +496,7 @@ class DocumentationAgent:
                     {"id": "Browser", "label": "Client Browser", "sub": "localhost:8080 / :5173", "x": 50, "y": 190, "color": "#08427b"},
                     {"id": "Nginx", "label": "frontend Container", "sub": "nginx:1.27-alpine (:8080->80)", "x": 310, "y": 190, "color": "#1168bd"},
                     {"id": "Uvicorn", "label": "backend Container", "sub": "python:3.12-slim + git (:8000)", "x": 600, "y": 190, "color": "#1d4ed8"},
-                    {"id": "LMStudio", "label": "Host LM Studio", "sub": "host.docker.internal:1234/v1", "x": 920, "y": 110, "color": "#4338ca"},
+                    {"id": "LMStudio", "label": "Pfizer LLMHub", "sub": "llmhub.platforms.pfizer/v1", "x": 920, "y": 110, "color": "#4338ca"},
                     {"id": "GitHub", "label": "GitHub / Local Volumes", "sub": "HTTPS Shallow Clone & AST Scan", "x": 920, "y": 270, "color": "#334155"},
                 ],
                 svg_edges=[
@@ -833,7 +833,7 @@ The **C4 Modelling** platform implements five deterministic and LLM-assisted eva
 
 ### 5. Self-Healing Repair & Deterministic AST Fallback
 - **Implementation**: `app/c4_service.py` (`_extract_with_retry`, `MAX_REPAIR_ATTEMPTS = 1`) and `app/agents.py` (`BaseLayerSubagent.run`).
-- **Mechanism**: Feeds validation exceptions back to the local LLM once for JSON self-repair, and automatically falls back to deterministic Python AST / Svelte source analysis if LM Studio is offline.
+- **Mechanism**: Feeds validation exceptions back to Pfizer LLMHub once for JSON self-repair, and automatically falls back to deterministic Python AST / Svelte source analysis if LLMHub is unreachable.
 - **Sandbox Execution Time**: `{sandbox_report['execution_time_ms']} ms` (`{sandbox_report['status'].upper()}`)
 """
 

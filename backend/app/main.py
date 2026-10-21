@@ -16,11 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError
 from pydantic import BaseModel, Field
 
-from app import llm_client
 from app.agents import manager_agent
 from app.c4_service import generate_layer
 from app.config import settings
 from app.doc_agent import documentation_agent
+from app.llmhub_adapter import list_models as llmhub_list_models
 from app.schemas import (
     AnalyzeRequest,
     HierarchyModelResponse,
@@ -72,12 +72,34 @@ class CodeAnalysisRequest(BaseModel):
 def root() -> dict:
     return {
         "service": "c4-model-visualizer multi-agent backend",
-        "lm_studio_base_url": settings.lm_studio_base_url,
-        "default_model": settings.lm_studio_model,
+        "llmhub_base_url": settings.llmhub_base_url,
+        "models": {
+            "powerful": settings.model_powerful,
+            "medium": settings.model_medium,
+        },
+        "config_path": str(settings.config_path),
         "architecture": {
-            "manager": manager_agent.agent_id,
-            "supervisor": manager_agent.supervisor.agent_id,
-            "subagents": [s.agent_id for s in manager_agent.supervisor.subagents],
+            "manager": {
+                "id": manager_agent.agent_id,
+                "adapter_tier": manager_agent.adapter.tier,
+                "model": manager_agent.adapter.model,
+            },
+            "supervisor": {
+                "id": manager_agent.supervisor.agent_id,
+                "adapter_tier": manager_agent.supervisor.adapter.tier,
+                "model": manager_agent.supervisor.adapter.model,
+            },
+            "subagents": [
+                {
+                    "id": s.agent_id,
+                    "adapter_tier": s.adapter.tier,
+                    "model": s.adapter.model,
+                    "experience_db": str(s.adapter.experience_db)
+                    if s.adapter.experience_db
+                    else None,
+                }
+                for s in manager_agent.supervisor.subagents
+            ],
             "documentation_agent": documentation_agent.agent_id,
         },
         "endpoints": [
@@ -101,12 +123,20 @@ def describe_agents() -> dict:
             "role": manager_agent.role,
             "responsibility": "Accepts a local path or GitHub URL, prepares the source inventory, and delegates to the Supervisor.",
             "skills": list(manager_agent.skills),
+            "llmhub": {
+                "tier": manager_agent.adapter.tier,
+                "model": manager_agent.adapter.model,
+            },
         },
         "supervisor": {
             "id": manager_agent.supervisor.agent_id,
             "role": manager_agent.supervisor.role,
             "responsibility": "Connects the 4 specialist subagents in top-down order (Context -> Container -> Component -> Code) and guarantees hierarchical parent-child traceability across layers.",
             "skills": list(manager_agent.supervisor.skills),
+            "llmhub": {
+                "tier": manager_agent.supervisor.adapter.tier,
+                "model": manager_agent.supervisor.adapter.model,
+            },
         },
         "subagents": [
             {
@@ -114,6 +144,13 @@ def describe_agents() -> dict:
                 "role": sub.role,
                 "layer": sub.layer,
                 "skills": list(sub.skills),
+                "llmhub": {
+                    "tier": sub.adapter.tier,
+                    "model": sub.adapter.model,
+                    "experience_db": str(sub.adapter.experience_db)
+                    if sub.adapter.experience_db
+                    else None,
+                },
             }
             for sub in manager_agent.supervisor.subagents
         ],
@@ -178,15 +215,35 @@ def generate_c4_hierarchy_model(request: ModelSourceRequest) -> HierarchyModelRe
 
 @app.get("/health")
 def health() -> dict:
+    if not settings.llmhub_api_key:
+        return {
+            "status": "llmhub_unconfigured",
+            "llmhub_base_url": settings.llmhub_base_url,
+            "hint": "Set LLMHUB_API_KEY in .env or config/llmhub.yaml. See scripts/check_llmhub.py.",
+        }
     try:
-        models = llm_client.list_models()
+        models = llmhub_list_models()
     except APIConnectionError:
         return {
-            "status": "lm_studio_unreachable",
-            "lm_studio_base_url": settings.lm_studio_base_url,
-            "hint": "Start LM Studio's local server: `lms server start`, or Developer tab -> Start Server.",
+            "status": "llmhub_unreachable",
+            "llmhub_base_url": settings.llmhub_base_url,
+            "hint": "Confirm Pfizer network/VPN access to https://llmhub.platforms.pfizer",
         }
-    return {"status": "ok", "lm_studio_base_url": settings.lm_studio_base_url, "models_loaded": models}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "llmhub_error",
+            "llmhub_base_url": settings.llmhub_base_url,
+            "error": str(exc),
+        }
+    return {
+        "status": "ok",
+        "llmhub_base_url": settings.llmhub_base_url,
+        "models": {
+            "powerful": settings.model_powerful,
+            "medium": settings.model_medium,
+        },
+        "models_loaded": models,
+    }
 
 
 @app.post("/api/c4/{layer}", response_model=LayerResponse)
@@ -200,7 +257,10 @@ def generate_c4_layer(layer: Layer, request: AnalyzeRequest) -> LayerResponse:
     except APIConnectionError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Could not reach LM Studio at {settings.lm_studio_base_url}. Is the local server running?",
+            detail=(
+                f"Could not reach Pfizer LLMHub at {settings.llmhub_base_url}. "
+                "Check VPN / credentials (scripts/check_llmhub.py)."
+            ),
         ) from exc
     except json.JSONDecodeError as exc:
         raise HTTPException(

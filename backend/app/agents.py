@@ -20,9 +20,15 @@ Architecture:
    - `ComponentSubagent` (`subagent-component`): Component layer (Controllers, Services, Modules) traced to Containers.
    - `CodeSubagent` (`subagent-code`): Code layer (Classes, Interfaces, Enums, Functions) traced to Components.
 
-Each specialist subagent uses the local LLM (via LM Studio) when reachable and
-automatically falls back to deterministic AST / source-tree static analysis so
-the pipeline always succeeds for any local path or GitHub repository.
+Each agent is bound to its own Pfizer LLMHub adapter (see ``config/llmhub.yaml``):
+
+- Manager / Supervisor use the **powerful** model tier.
+- Specialist layer subagents use the **medium** model tier plus a lightweight
+  SQLite experience DB that stores prior code-reading experiences to refine
+  deciphering on repeat repository analyses.
+
+When LLMHub is unreachable (or ``use_llm`` is false), specialists fall back to
+deterministic AST / source-tree static analysis so the pipeline always succeeds.
 """
 
 from __future__ import annotations
@@ -48,7 +54,8 @@ from app.c4_service import (
     _build_legend,
     _validate_edges,
 )
-from app.llm_client import chat_json, is_server_reachable
+from app.experience_store import ExperienceStore, fingerprint_repo
+from app.llmhub_adapter import LLMHubAdapter, get_adapter, is_hub_reachable
 from app.prompts import SYSTEM_PROMPT, build_repair_prompt
 from app.repo_scanner import IGNORED_DIRS, INCLUDED_EXTENSIONS, build_repo_context
 from app.schemas import (
@@ -103,6 +110,13 @@ class BaseLayerSubagent:
         "validate-repair",
     )
 
+    def __init__(self) -> None:
+        self.adapter: LLMHubAdapter = get_adapter(self.agent_id)
+        exp_path = self.adapter.experience_db
+        self.experience_store: ExperienceStore | None = (
+            ExperienceStore(exp_path, layer=self.layer) if exp_path else None
+        )
+
     def run(
         self,
         inventory: RepoInventory,
@@ -112,14 +126,17 @@ class BaseLayerSubagent:
     ) -> tuple[LayerResponse, AgentReport]:
         extraction: LLMExtraction | None = None
         summary_suffix = "static source analyzer"
+        target_model = model or self.adapter.model
 
         if use_llm:
             try:
-                extraction = self._extract_via_llm(inventory, parent_nodes, model)
-                summary_suffix = f"LLM ({model or 'default'})"
+                extraction = self._extract_via_llm(inventory, parent_nodes, target_model)
+                summary_suffix = (
+                    f"LLMHub {self.adapter.tier}/{target_model}"
+                )
             except Exception as exc:
                 logger.warning(
-                    "[%s] LLM extraction failed (%s); falling back to static source analysis.",
+                    "[%s] LLMHub extraction failed (%s); falling back to static source analysis.",
                     self.agent_id,
                     exc,
                 )
@@ -128,6 +145,24 @@ class BaseLayerSubagent:
             extraction = self.extract_deterministic(inventory, parent_nodes)
 
         extraction = self._ensure_parent_links(extraction, parent_nodes)
+
+        if self.experience_store is not None:
+            try:
+                rel_paths = [
+                    str(p.relative_to(inventory.root))
+                    if p.is_relative_to(inventory.root)
+                    else str(p)
+                    for p in inventory.files
+                ]
+                fp = fingerprint_repo(inventory.repo_name, rel_paths)
+                self.experience_store.remember_from_extraction(
+                    repo_fingerprint=fp,
+                    repo_name=inventory.repo_name,
+                    extraction=extraction,
+                )
+            except Exception as exc:  # noqa: BLE001 — experience DB must never fail the pipeline
+                logger.debug("[%s] experience store write skipped: %s", self.agent_id, exc)
+
         subtitle = self._build_subtitle(inventory, parent_nodes)
 
         response = LayerResponse(
@@ -236,23 +271,38 @@ class BaseLayerSubagent:
                 f"{json.dumps(parent_list, indent=2)}\n"
             )
 
+        experience_block = ""
+        if self.experience_store is not None:
+            rel_paths = [
+                str(p.relative_to(inventory.root))
+                if p.is_relative_to(inventory.root)
+                else str(p)
+                for p in inventory.files
+            ]
+            fp = fingerprint_repo(inventory.repo_name, rel_paths)
+            experience_block = self.experience_store.recall_as_prompt_block(fp)
+
         user_prompt = (
             f"You are specialist subagent `{self.agent_id}` ({self.role}) for C4 layer: {self.layer}.\n"
+            f"LLMHub adapter tier: {self.adapter.tier} · model: {model or self.adapter.model}\n"
             f"Allowed values for data.kind at this layer: {allowed_kinds}\n"
             f"{parent_context}\n"
+            f"{experience_block}"
             f"--- Repository context ({inventory.repo_name}) ---\n"
             f"{inventory.repo_context}\n"
             f"--- end repository context ---\n\n"
             "Produce STRICT JSON now."
         )
-        raw = chat_json(SYSTEM_PROMPT, user_prompt, model=model)
+        raw = self.adapter.chat_json(SYSTEM_PROMPT, user_prompt, model=model)
         try:
             extraction = LLMExtraction.model_validate(raw)
             _validate_edges(extraction)
             return extraction
         except (ValidationError, ValueError) as exc:
             repair_prompt = build_repair_prompt(json.dumps(raw), str(exc))
-            raw_repaired = chat_json(SYSTEM_PROMPT, repair_prompt, model=model)
+            raw_repaired = self.adapter.chat_json(
+                SYSTEM_PROMPT, repair_prompt, model=model
+            )
             extraction = LLMExtraction.model_validate(raw_repaired)
             _validate_edges(extraction)
             return extraction
@@ -666,7 +716,7 @@ def _discover_external_systems(inventory: RepoInventory) -> list[tuple[str, str,
                 "Managed PostgreSQL database, Row-Level Security policy engine, and authentication session backend.",
             )
         )
-    if "langfuse" in sample or "@ai-sdk" in sample or "openai" in sample or "lm_studio" in sample:
+    if "langfuse" in sample or "@ai-sdk" in sample or "openai" in sample or "llmhub" in sample:
         externals.append(
             (
                 "ext-ai-llm-hub",
@@ -1612,6 +1662,7 @@ class SupervisorAgent:
     )
 
     def __init__(self) -> None:
+        self.adapter: LLMHubAdapter = get_adapter(self.agent_id)
         self.subagents: tuple[
             ContextSubagent, ContainerSubagent, ComponentSubagent, CodeSubagent
         ] = (
@@ -1632,6 +1683,7 @@ class SupervisorAgent:
         previous_nodes: list[C4Node] = []
 
         for subagent in self.subagents:
+            # Specialists always use their medium-tier adapter model unless overridden.
             layer_resp, sub_report = subagent.run(
                 inventory=inventory,
                 parent_nodes=previous_nodes,
@@ -1646,6 +1698,18 @@ class SupervisorAgent:
         total_nodes = sum(len(l.nodes) for l in layers_out.values())
         total_edges = sum(len(l.edges) for l in layers_out.values())
 
+        hierarchy_note = ""
+        if use_llm:
+            try:
+                hierarchy_note = self._refine_hierarchy_summary(
+                    inventory=inventory,
+                    total_nodes=total_nodes,
+                    total_edges=total_edges,
+                    model=model or self.adapter.model,
+                )
+            except Exception as exc:
+                logger.debug("[%s] hierarchy refine skipped: %s", self.agent_id, exc)
+
         supervisor_report = AgentReport(
             agent_id=self.agent_id,
             role=self.role,
@@ -1653,12 +1717,35 @@ class SupervisorAgent:
             status="completed",
             summary=(
                 f"Coordinated 4 specialist subagents (Context -> Container -> Component -> Code) "
-                f"and verified parent-child hierarchy across {total_nodes} nodes and {total_edges} edges."
+                f"via LLMHub {self.adapter.tier}/{self.adapter.model} and verified parent-child "
+                f"hierarchy across {total_nodes} nodes and {total_edges} edges."
+                + (f" {hierarchy_note}" if hierarchy_note else "")
             ),
             produced_nodes=total_nodes,
             produced_edges=total_edges,
         )
         return layers_out, hierarchy, [supervisor_report, *reports]
+
+    def _refine_hierarchy_summary(
+        self,
+        inventory: RepoInventory,
+        total_nodes: int,
+        total_edges: int,
+        model: str,
+    ) -> str:
+        """Use the powerful Supervisor adapter to produce a short hierarchy QA note."""
+        prompt = (
+            f"Repo: {inventory.repo_name}. Layers extracted with {total_nodes} nodes and "
+            f"{total_edges} edges across Context→Container→Component→Code. "
+            "Reply with ONE short sentence confirming hierarchical parent-child consistency "
+            "expectations for C4 (no markdown)."
+        )
+        return self.adapter.chat_text(
+            "You are the C4 hierarchy supervisor. Be concise.",
+            prompt,
+            model=model,
+            temperature=0.1,
+        ).strip()
 
     def build_hierarchy_tree(
         self, layers: dict[Layer, LayerResponse]
@@ -1723,6 +1810,7 @@ class ManagerAgent:
     )
 
     def __init__(self) -> None:
+        self.adapter: LLMHubAdapter = get_adapter(self.agent_id)
         self.supervisor = SupervisorAgent()
 
     def analyze(
@@ -1764,7 +1852,7 @@ class ManagerAgent:
                 repo_context=repo_context,
             )
 
-            llm_ready = bool(use_llm and is_server_reachable())
+            llm_ready = bool(use_llm and is_hub_reachable())
             layers, hierarchy, sub_reports = self.supervisor.coordinate(
                 inventory=inventory,
                 use_llm=llm_ready,
@@ -1778,7 +1866,9 @@ class ManagerAgent:
                 status="completed",
                 summary=(
                     f"Ingested {resolved_type} source '{repo_name}' ({len(files)} files) "
-                    f"and delegated hierarchical C4 generation to Supervisor."
+                    f"via LLMHub {self.adapter.tier}/{self.adapter.model} and delegated "
+                    f"hierarchical C4 generation to Supervisor"
+                    f"{' (LLMHub online)' if llm_ready else ' (deterministic fallback)'}."
                 ),
                 produced_nodes=sum(len(l.nodes) for l in layers.values()),
                 produced_edges=sum(len(l.edges) for l in layers.values()),

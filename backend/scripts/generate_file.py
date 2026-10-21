@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Generate or update one file from an instruction file, using the local
-model via LM Studio.
+"""Generate or update one file from an instruction file via Pfizer LLMHub.
 
 The instruction lives in its own text file rather than on the command line —
 easier to write/edit multi-line briefs, no shell quoting headaches, and the
@@ -16,7 +15,7 @@ Examples:
 
   python scripts/generate_file.py src/utils.py instructions/add_validator.txt -y
 
-  python scripts/generate_file.py src/big_module.py instructions/big_module.txt --model prism-ml/bonsai-27b
+  python scripts/generate_file.py src/big_module.py instructions/big_module.txt --model gpt-4o
 """
 
 from __future__ import annotations
@@ -62,7 +61,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("output_path", help="Path to the file to create or update")
     parser.add_argument("instruction_file", help="Path to a text file containing the instruction")
     parser.add_argument(
-        "--model", default=None, help=f"Override the model to use (default: {settings.lm_studio_model})"
+        "--model",
+        default=None,
+        help=f"Override the model to use (default: {settings.model_powerful})",
     )
     parser.add_argument("-y", "--yes", action="store_true", help="Overwrite an existing file without asking")
     return parser.parse_args()
@@ -84,15 +85,15 @@ def main() -> int:
     existing_content = output_path.read_text() if output_path.exists() else None
     system_prompt = build_system_prompt(output_path, existing_content)
 
-    model = args.model or settings.lm_studio_model
+    model = args.model or settings.model_powerful
     mode = "Updating" if existing_content is not None else "Generating"
-    print(f"{mode} {output_path} with model '{model}'...\n")
+    print(f"{mode} {output_path} with LLMHub model '{model}'...\n")
 
     try:
         content = llm_client.chat_text(system_prompt, instruction, model=model)
     except Exception as exc:  # noqa: BLE001 — surface any failure (connection, model error) directly
         print(f"[FAIL] Generation failed: {exc}")
-        print("  -> Is LM Studio's server running with this model loaded? Try scripts/check_lmstudio.py")
+        print("  -> Check Pfizer LLMHub credentials. Try: python scripts/check_llmhub.py")
         return 1
 
     print("----- Generated content -----")

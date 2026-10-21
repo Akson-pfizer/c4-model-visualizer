@@ -3,7 +3,7 @@
 Title/description/note/legend are filled in here deterministically rather than
 left to the model — that way layer framing and the fixed C4 guidance notes
 stay consistent and exactly match the frontend's static demo data regardless
-of which local model is loaded or how well it follows instructions.
+of which LLMHub model is selected or how well it follows instructions.
 """
 
 from __future__ import annotations

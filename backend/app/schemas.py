@@ -145,7 +145,7 @@ class AnalyzeRequest(BaseModel):
     )
     model: str | None = Field(
         default=None,
-        description="Override the model id to use for this request (defaults to LM_STUDIO_MODEL).",
+        description="Override the LLMHub chat model id (defaults to medium tier in config/llmhub.yaml).",
     )
 
 
@@ -159,11 +159,11 @@ class ModelSourceRequest(BaseModel):
     )
     use_llm: bool = Field(
         default=False,
-        description="Whether to use LM Studio LLM when reachable (falls back to deterministic AST/source analysis automatically).",
+        description="Whether to use Pfizer LLMHub when reachable (falls back to deterministic AST/source analysis automatically).",
     )
     model: str | None = Field(
         default=None,
-        description="Optional model override when use_llm is enabled.",
+        description="Optional LLMHub model override when use_llm is enabled (specialists default to medium tier).",
     )
 
 

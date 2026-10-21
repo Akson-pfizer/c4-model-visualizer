@@ -1,0 +1,52 @@
+# Pfizer LLMHub gateway configuration.
+# Docs: https://docs.platforms.pfizer/llmhub/docs/llmhub-endpoints
+#
+# Credentials may be set here OR via environment variables (env wins):
+#   LLMHUB_API_KEY, LLMHUB_BASE_URL
+#
+# Do not commit real API keys. Prefer:
+#   api_key: ${LLMHUB_API_KEY}
+# or leave api_key empty and set LLMHUB_API_KEY in .env / Secrets Store.
+
+llmhub:
+  base_url: https://llmhub.platforms.pfizer/v1
+  api_key: ${LLMHUB_API_KEY}
+  user_agent: c4-model-visualizer/1.0
+  timeout_seconds: 120
+
+  # Model tiers (OpenAI-compatible chat model IDs available on your key).
+  # Call GET /v1/models if a request returns "No provider found for model".
+  models:
+    powerful: gpt-4o          # Manager + Supervisor (orchestration / planning)
+    medium: gpt-4.1-mini      # Specialist layer agents (Context → Code)
+
+  # Per-agent adapter bindings. Each agent gets its own LLMHubAdapter instance.
+  agents:
+    c4-manager:
+      tier: powerful
+    c4-supervisor:
+      tier: powerful
+    c4-doc-agent:
+      tier: powerful
+    subagent-context:
+      tier: medium
+      experience_db: data/experience/context.db
+    subagent-container:
+      tier: medium
+      experience_db: data/experience/container.db
+    subagent-component:
+      tier: medium
+      experience_db: data/experience/component.db
+    subagent-code:
+      tier: medium
+      experience_db: data/experience/code.db
+
+app:
+  max_context_chars: 24000
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+    - http://localhost:8080
+    - http://127.0.0.1:8080
+  experience_db_dir: data/experience

@@ -2,7 +2,7 @@
 
 > *“Design is the silent ambassador of thought; code is merely its echo.”*
 
-An interactive C4 software architecture modelling, visualization, and Confluence documentation suite powered by a **Svelte 5 + SvelteFlow frontend**, a **7-Agent FastAPI Backend**, **7 Reusable Agent Skills**, and **LM Studio local LLM inference** (with deterministic Python AST / source-tree fallback).
+An interactive C4 software architecture modelling, visualization, and Confluence documentation suite powered by a **Svelte 5 + SvelteFlow frontend**, a **7-Agent FastAPI Backend**, **7 Reusable Agent Skills**, and **Pfizer LLMHub** (per-agent adapters with powerful/medium model tiers + deterministic Python AST / source-tree fallback).
 
 ---
 

@@ -53,13 +53,17 @@ flowchart TB
         S7["confluence-export"]
     end
 
-    LMS["LM Studio Local Server (:1234/v1)<br/>+ Deterministic AST Fallback"]
+    Hub["Pfizer LLMHub<br/>powerful (Mgr/Sup) · medium (layers)<br/>+ Deterministic AST Fallback"]
+    ExpDB["Layer Experience SQLite DBs<br/>data/experience/*.db"]
 
     Client -->|POST /api/c4/model| Mgr
     Client -->|POST /api/docs/generate| Doc
     Mgr --> Sup
     Sup --> Ctx --> Cnt --> Cmp --> Cod
-    Subagents -->|Chat JSON + 1x Repair Retry| LMS
+    Mgr -->|powerful tier| Hub
+    Sup -->|powerful tier| Hub
+    Subagents -->|medium tier + Chat JSON| Hub
+    Subagents -.->|read/write experiences| ExpDB
     Mgr -.-> Skills
     Sup -.-> Skills
     Subagents -.-> Skills
@@ -104,11 +108,15 @@ c4-model-visualizer/backend/
 │   ├── schemas.py              # Pydantic data contracts (LayerResponse, HierarchyModelResponse, C4Node, C4Edge)
 │   ├── repo_scanner.py         # Bounded source-tree context builder
 │   ├── prompts.py              # Per-layer C4 system/user/repair prompts
-│   ├── llm_client.py           # OpenAI SDK client pointed at LM Studio
-│   └── config.py               # Environment settings
+│   ├── llmhub_adapter.py       # Per-agent Pfizer LLMHub adapters (powerful/medium)
+│   ├── experience_store.py     # SQLite code-reading experience DBs for layer agents
+│   ├── llm_client.py           # Compatibility facade over LLMHub adapters
+│   └── config.py               # Loads config/llmhub.yaml + env overrides
+├── config/
+│   └── llmhub.yaml             # LLMHub credentials, model tiers, per-agent bindings
 └── scripts/
     ├── run_doc_agent.py        # CLI runner for c4-doc-agent -> generates ../documentation/
-    ├── check_lmstudio.py       # Verifies LM Studio connectivity
+    ├── check_llmhub.py         # Verifies LLMHub connectivity & model tiers
     └── generate_file.py        # Single-file instruction generator
 ```
 
@@ -118,7 +126,7 @@ c4-model-visualizer/backend/
 
 | Method | Path | Description |
 | :---: | :--- | :--- |
-| `GET` | `/health` | Checks LM Studio reachability and lists loaded models |
+| `GET` | `/health` | Checks Pfizer LLMHub reachability and lists available models |
 | `GET` | `/api/agents` | Lists `c4-manager`, `c4-supervisor`, the 4 layer subagents, `c4-doc-agent`, and their equipped skills |
 | `GET` | `/api/skills` | Returns the catalog of 7 reusable skills (`read-code`, `draw-diagram`, `execute-sandbox`, `follow-workflows`, `evaluate-metrics`, `validate-repair`, `confluence-export`) |
 | `POST` | `/api/c4/model` | Runs the full multi-agent pipeline on a local path or GitHub URL and returns all 4 layers + 4-tier `hierarchy` tree |
@@ -128,7 +136,23 @@ c4-model-visualizer/backend/
 
 ---
 
-## Running Locally & Generating Documentation
+## Pfizer LLMHub Setup
+
+Credentials and model tiers live in [`config/llmhub.yaml`](config/llmhub.yaml) (see [LLMHub endpoints](https://docs.platforms.pfizer/llmhub/docs/llmhub-endpoints)):
+
+| Agent | Tier | Default model |
+| :--- | :--- | :--- |
+| `c4-manager`, `c4-supervisor`, `c4-doc-agent` | **powerful** | `gpt-4o` |
+| `subagent-context` … `subagent-code` | **medium** | `gpt-4.1-mini` |
+
+Layer specialists also write/read lightweight SQLite experience DBs under `data/experience/` to refine code deciphering across runs.
+
+```bash
+cd c4-model-visualizer/backend
+cp .env.example .env   # set LLMHUB_API_KEY=
+pip install -r requirements.txt
+python scripts/check_llmhub.py
+```
 
 ### 1. Start the Backend Server
 
