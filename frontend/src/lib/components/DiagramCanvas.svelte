@@ -4,26 +4,49 @@
   import FlowInner from './FlowInner.svelte';
   import FullscreenToggle from './FullscreenToggle.svelte';
 
-  let { layer, onNodeSelect, onNodeDoubleClick, onBoundaryClick, loadGeneration, onReady } =
-    $props();
+  let {
+    layer,
+    onNodeSelect,
+    onNodeDoubleClick,
+    onBoundaryClick,
+    loadGeneration,
+    onReady,
+    onHistoryStateChange,
+    enableFullscreen = true
+  } = $props();
 
   let shellEl = $state(/** @type {HTMLDivElement | null} */ (null));
+  let flowInner = $state(/** @type {any} */ (null));
+
+  /** @returns {boolean} */
+  export function undoMove() {
+    return Boolean(flowInner?.undoMove?.());
+  }
+
+  /** @returns {boolean} */
+  export function redoMove() {
+    return Boolean(flowInner?.redoMove?.());
+  }
 </script>
 
 <div class="canvas" bind:this={shellEl} aria-label="C4 diagram canvas">
   <SvelteFlowProvider>
     <FlowInner
+      bind:this={flowInner}
       {layer}
       {onNodeSelect}
       {onNodeDoubleClick}
       {onBoundaryClick}
       {loadGeneration}
       {onReady}
+      {onHistoryStateChange}
     />
   </SvelteFlowProvider>
-  <div class="canvas__fs">
-    <FullscreenToggle target={shellEl} />
-  </div>
+  {#if enableFullscreen}
+    <div class="canvas__fs">
+      <FullscreenToggle target={shellEl} />
+    </div>
+  {/if}
 </div>
 
 <style>

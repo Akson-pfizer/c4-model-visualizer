@@ -15,7 +15,7 @@
   import { plainClone } from '../../plainClone.js';
   import LayerSelect from '../LayerSelect.svelte';
   import HierarchyTreeCanvas from '../HierarchyTreeCanvas.svelte';
-  import PfizerLoader from '../PfizerLoader.svelte';
+  import OrthosLoader from '../OrthosLoader.svelte';
   import ToastBanner from './ToastBanner.svelte';
   import BuildCanvas from './BuildCanvas.svelte';
   import BuildPalette from './BuildPalette.svelte';
@@ -382,7 +382,7 @@
         {/key}
         {#if loading}
           <div class="work-area__loader" out:fade={{ duration: 180 }}>
-            <PfizerLoader
+            <OrthosLoader
               label={viewMode === 'tree'
                 ? 'Loading C4 Hierarchy Tree'
                 : `Loading ${layer.title} diagram`}

@@ -1,0 +1,72 @@
+# Orthos-as-a-service: regenerate architecture docs on merge and publish to Confluence.
+#
+# Required repository secrets:
+#   CONFLUENCE_BASE_URL     e.g. https://your-org.atlassian.net/wiki
+#   CONFLUENCE_EMAIL
+#   CONFLUENCE_API_TOKEN
+#   CONFLUENCE_PAGE_ID      (or CONFLUENCE_PAGE_URL)
+#
+# Optional secrets:
+#   LLMHUB_API_KEY
+#   ORTHOS_API_URL          if set, CLI calls a remote Orthos backend instead of in-process
+
+name: Orthos docs → Confluence
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  orthos-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Orthos backend deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate + publish via Orthos service CLI
+        working-directory: backend
+        env:
+          LLMHUB_API_KEY: ${{ secrets.LLMHUB_API_KEY }}
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+          CONFLUENCE_PAGE_URL: ${{ secrets.CONFLUENCE_PAGE_URL }}
+          ORTHOS_API_URL: ${{ secrets.ORTHOS_API_URL }}
+        run: |
+          set -euo pipefail
+          PROJECT_PATH="${GITHUB_WORKSPACE}"
+          OUTPUT_FOLDER="${GITHUB_WORKSPACE}/documentation"
+          if [ -n "${ORTHOS_API_URL:-}" ]; then
+            python scripts/orthos_service.py pipeline \
+              --api-url "${ORTHOS_API_URL}" \
+              --project-path "${PROJECT_PATH}" \
+              --output-folder "${OUTPUT_FOLDER}" \
+              --publish \
+              --prefer both
+          else
+            python scripts/orthos_service.py pipeline \
+              --project-path "${PROJECT_PATH}" \
+              --output-folder "${OUTPUT_FOLDER}" \
+              --publish \
+              --prefer both
+          fi
+
+      - name: Upload documentation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orthos-documentation
+          path: documentation
+          if-no-files-found: warn

@@ -5,6 +5,7 @@
     Background,
     BackgroundVariant,
     Controls,
+    ControlButton,
     MiniMap,
     Panel,
     MarkerType,
@@ -13,7 +14,7 @@
   import C4Node from '../nodes/C4Node.svelte';
   import C4Boundary from '../nodes/C4Boundary.svelte';
   import C4Edge from '../edges/C4Edge.svelte';
-  import Legend from '../Legend.svelte';
+  import CollapsibleLegend from '../CollapsibleLegend.svelte';
   import { ARROWS, SHAPES } from '../../buildCatalog.js';
   import { cloneDiagramSnapshot } from '../../keyboardShortcuts.js';
   import { plainClone } from '../../plainClone.js';
@@ -30,6 +31,8 @@
     onBoundaryClick,
     onReady
   } = $props();
+
+  let legendOpen = $state(false);
 
   const nodeTypes = { c4Node: C4Node, c4Boundary: C4Boundary };
   const edgeTypes = { c4Edge: C4Edge };
@@ -409,7 +412,24 @@
     proOptions={{ hideAttribution: true }}
   >
     <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />
-    <Controls />
+    <Controls>
+      {#if legend.length > 0}
+        <ControlButton
+          class={legendOpen ? 'legend-control is-active' : 'legend-control'}
+          title={legendOpen ? 'Hide legend' : 'Legend'}
+          aria-label={legendOpen ? 'Hide legend' : 'Show legend'}
+          aria-pressed={legendOpen}
+          onclick={() => (legendOpen = !legendOpen)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M4 5h16v2H4V5zm0 6h10v2H4v-2zm0 6h16v2H4v-2zm14-7.5 1.5 3 3.3.4-2.5 2.3.7 3.2L18 15.8 15 17.4l.7-3.2-2.5-2.3 3.3-.4L18 9.5z"
+            />
+          </svg>
+        </ControlButton>
+      {/if}
+    </Controls>
     <MiniMap
       position="top-right"
       width={130}
@@ -419,9 +439,9 @@
       nodeColor={() => '#bcd0e8'}
       maskColor="rgba(29,78,216,0.06)"
     />
-    {#if legend.length > 0}
-      <Panel position="top-left">
-        <Legend {legend} />
+    {#if legendOpen}
+      <Panel position="bottom-left">
+        <CollapsibleLegend {legend} />
       </Panel>
     {/if}
   </SvelteFlow>
@@ -433,5 +453,10 @@
     min-width: 0;
     min-height: 0;
     height: 100%;
+  }
+
+  :global(.svelte-flow__controls-button.legend-control.is-active) {
+    background: var(--blue-50, #eff6ff) !important;
+    color: var(--blue-700, #1d4ed8) !important;
   }
 </style>

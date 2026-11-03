@@ -5,6 +5,59 @@
  */
 
 const PROFILE_KEY = 'c4.profile.meta.v1';
+/** Last opened / analyzed catalog project — restores Visualizer after reload. */
+const ACTIVE_STUDIO_KEY = 'c4.studio.active.v1';
+
+/**
+ * @typedef {object} ActiveStudioState
+ * @property {string} entryId
+ * @property {string} [source]
+ * @property {'local' | 'github'} [sourceType]
+ * @property {string} [repoName]
+ * @property {string} [savedAt]
+ */
+
+/**
+ * @param {ActiveStudioState} state
+ */
+export function rememberActiveStudio(state) {
+  if (!state?.entryId) return;
+  try {
+    localStorage.setItem(
+      ACTIVE_STUDIO_KEY,
+      JSON.stringify({
+        entryId: state.entryId,
+        source: state.source || '',
+        sourceType: state.sourceType === 'github' ? 'github' : 'local',
+        repoName: state.repoName || '',
+        savedAt: nowIso()
+      })
+    );
+  } catch {
+    /* ignore quota */
+  }
+}
+
+/** @returns {ActiveStudioState | null} */
+export function getActiveStudio() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_STUDIO_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.entryId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearActiveStudio() {
+  try {
+    localStorage.removeItem(ACTIVE_STUDIO_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * @typedef {object} CatalogEntry
@@ -116,6 +169,43 @@ export async function listCatalog(query = '') {
     );
   }
   return Array.isArray(data.entries) ? data.entries : [];
+}
+
+/**
+ * Normalize source strings for catalog matching (trim + collapse ~ home).
+ * @param {string} source
+ * @returns {string}
+ */
+export function normalizeCatalogSource(source) {
+  return String(source || '').trim();
+}
+
+/**
+ * Find a previously analyzed catalog entry for this source path/URL.
+ * Matches exact stored source first, then case-insensitive fallback.
+ * @param {string} source
+ * @param {'local' | 'github'} [sourceType='local']
+ * @returns {Promise<CatalogEntry | null>}
+ */
+export async function findCatalogEntryBySource(source, sourceType = 'local') {
+  const needle = normalizeCatalogSource(source);
+  if (!needle) return null;
+  const type = sourceType === 'github' ? 'github' : 'local';
+  try {
+    const entries = await listCatalog(needle);
+    const exact = entries.find(
+      (e) => e.source_type === type && normalizeCatalogSource(e.source) === needle
+    );
+    if (exact) return exact;
+    const loose = entries.find(
+      (e) =>
+        e.source_type === type &&
+        normalizeCatalogSource(e.source).toLowerCase() === needle.toLowerCase()
+    );
+    return loose ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

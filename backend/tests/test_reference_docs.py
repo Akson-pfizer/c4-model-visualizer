@@ -42,3 +42,14 @@ def test_generate_typedoc_style(tmp_path: Path) -> None:
     assert result["style"] == "typedoc"
     assert (out / "typedoc" / "README.md").exists()
     assert Path(result["index_file"]).exists()
+    assert result.get("cached") is False
+
+    # Second call with unchanged sources must hit the cache.
+    cached = generate_reference_docs(tmp_path, output_folder=out, style="auto")
+    assert cached.get("cached") is True
+    assert cached["index_file"] == result["index_file"]
+    assert cached["symbol_count"] == result["symbol_count"]
+
+    # force=True regenerates even when fingerprint matches.
+    forced = generate_reference_docs(tmp_path, output_folder=out, style="auto", force=True)
+    assert forced.get("cached") is False

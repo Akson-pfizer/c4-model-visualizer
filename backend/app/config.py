@@ -248,3 +248,91 @@ def _build_settings(config_path: Path | None = None) -> Settings:
 
 
 settings = _build_settings()
+
+_ENV_FILE = _BACKEND_ROOT / ".env"
+
+
+def mask_api_key(api_key: str) -> str:
+    """Return a display-safe mask (prefix + bullets + suffix). Never the full secret."""
+    key = (api_key or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "•" * len(key)
+    return f"{key[:4]}{'•' * min(24, len(key) - 8)}{key[-4:]}"
+
+
+def _upsert_dotenv(updates: dict[str, str], env_path: Path | None = None) -> None:
+    """Create or update KEY=value lines in backend/.env (preserves other lines)."""
+    path = env_path or _ENV_FILE
+    lines: list[str] = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+    remaining = dict(updates)
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            out.append(line)
+            continue
+        key, _, _ = line.partition("=")
+        key = key.strip()
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+
+    if remaining:
+        if out and out[-1].strip():
+            out.append("")
+        for key, value in remaining.items():
+            out.append(f"{key}={value}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+
+
+def apply_llmhub_credentials(
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    """Update runtime LLMHub credentials and persist them to ``.env``.
+
+    Pass ``api_key=None`` (or omit) to leave the current key unchanged.
+    An empty string clears the key.
+    """
+    env_updates: dict[str, str] = {}
+
+    if base_url is not None:
+        cleaned = str(base_url).strip().rstrip("/")
+        for suffix in ("/chat/completions", "/completions", "/models"):
+            if cleaned.endswith(suffix):
+                cleaned = cleaned[: -len(suffix)].rstrip("/")
+        if cleaned and not cleaned.endswith("/v1"):
+            cleaned = f"{cleaned}/v1"
+        if not cleaned:
+            cleaned = "https://llmhub.platforms.pfizer/v1"
+        settings.llmhub_base_url = cleaned
+        os.environ["LLMHUB_BASE_URL"] = cleaned
+        env_updates["LLMHUB_BASE_URL"] = cleaned
+
+    if api_key is not None:
+        key = str(api_key).strip()
+        settings.llmhub_api_key = key
+        if key:
+            os.environ["LLMHUB_API_KEY"] = key
+            env_updates["LLMHUB_API_KEY"] = key
+        else:
+            os.environ.pop("LLMHUB_API_KEY", None)
+            env_updates["LLMHUB_API_KEY"] = ""
+
+    if env_updates:
+        _upsert_dotenv(env_updates)
+
+    return {
+        "base_url": settings.llmhub_base_url,
+        "api_key_configured": bool(settings.llmhub_api_key),
+        "api_key_masked": mask_api_key(settings.llmhub_api_key),
+    }

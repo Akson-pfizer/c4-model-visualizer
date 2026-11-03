@@ -22,6 +22,21 @@
   --blue-700: #1d4ed8;
   --blue-900: #1e3a6a;
 
+  /* Pfizer Brand Identity 2.0 — primary + secondary (diagram pastels) */
+  --pfizer-blue-70: #0000c9;
+  --pfizer-blue-90: #000067;
+  --pfizer-blue-10: #e8f2ff;
+  --pfizer-blue-05: #eef5fb;
+  --pfizer-blue-03: #ecf6ff;
+  --pfizer-cyan-50: #0095ff;
+  --pfizer-cyan-30: #68d1ff;
+  --pfizer-cyan-10: #aee3ff;
+  --pfizer-teal: #00b7a5;
+  --pfizer-lavender: #a68aff;
+
+  --edge-idle: #8fa9c9;
+  --edge-hot: var(--pfizer-cyan-50);
+
   --accent: var(--blue-600);
   --accent-strong: var(--blue-700);
   --accent-soft: var(--blue-50);

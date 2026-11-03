@@ -1,8 +1,10 @@
 <script>
+  import OrthosMark from './OrthosMark.svelte';
+
   let {
-    onOpenShortcuts,
     onOpenCatalog,
     onOpenStudio,
+    onOpenProfile,
     profileName = 'Architect',
     appView = 'catalog'
   } = $props();
@@ -18,21 +20,11 @@
     title="Go to Architect Catalog"
     onclick={() => onOpenCatalog?.()}
   >
-    <svg class="app-header__mark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="#1D4ED8" />
-      <rect x="5" y="5" width="9" height="9" rx="2" fill="#EFF6FF" />
-      <rect x="18" y="5" width="9" height="9" rx="2" fill="#BFDBFE" />
-      <rect x="5" y="18" width="9" height="9" rx="2" fill="#93C5FD" />
-      <rect x="18" y="18" width="9" height="9" rx="2" fill="#60A5FA" />
-    </svg>
+    <OrthosMark class="app-header__mark" size={24} />
     <div class="app-header__title">
       <span class="app-header__title-main">Orthos</span>
       <span class="app-header__title-sub">
-        {#if onCatalog}
-          Architect Catalog — pick a repo or open Orthos Studio
-        {:else}
-          Orthos Studio — analyze, visualize, and refine architecture
-        {/if}
+        “Design is the silent ambassador of thought; code is merely its echo.”
       </span>
     </div>
   </button>
@@ -47,34 +39,19 @@
       >
         Orthos Studio
       </button>
-    {:else}
-      <button
-        type="button"
-        class="shortcuts-trigger"
-        title="Keyboard Shortcuts for macOS (⌘) & Windows (Ctrl) — press ? or Ctrl+/"
-        onclick={() => onOpenShortcuts?.()}
-      >
-        <span class="shortcuts-trigger__kbd">⌘ / Ctrl</span>
-        <span>Shortcuts (?)</span>
-      </button>
-      <button
-        type="button"
-        class="profile-trigger"
-        title="Back to Architect Catalog"
-        onclick={() => onOpenCatalog?.()}
-      >
-        <span class="profile-trigger__avatar" aria-hidden="true">{initial}</span>
-        <span class="profile-trigger__copy">
-          <span class="profile-trigger__name">{profileName}</span>
-          <span class="profile-trigger__sub">Catalog</span>
-        </span>
-      </button>
     {/if}
-    <!-- Placeholder wordmark: swap for the official Pfizer logo asset from internal brand resources. -->
-    <span class="pfizer-mark" aria-label="Pfizer">
-      <span class="pfizer-mark__dot" aria-hidden="true"></span>
-      Pfizer
-    </span>
+    <button
+      type="button"
+      class="profile-trigger"
+      title="Profile & LLMHub credentials"
+      onclick={() => onOpenProfile?.()}
+    >
+      <span class="profile-trigger__avatar" aria-hidden="true">{initial}</span>
+      <span class="profile-trigger__copy">
+        <span class="profile-trigger__name">{profileName}</span>
+        <span class="profile-trigger__sub">Settings</span>
+      </span>
+    </button>
   </div>
 </header>
 
@@ -83,20 +60,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 12px 24px;
+    gap: 12px;
+    padding: 6px 20px;
+    min-height: 44px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
     flex-wrap: wrap;
   }
 
   .app-header__brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex: 1;
-    min-width: 200px;
+    min-width: 180px;
   }
 
   .app-header__brand-btn {
@@ -114,93 +92,68 @@
 
   .app-header__brand--right {
     justify-content: flex-end;
-    gap: 14px;
+    gap: 10px;
+    flex: 0 1 auto;
   }
 
   .studio-trigger {
     appearance: none;
     border: none;
-    border-radius: 10px;
-    padding: 8px 16px;
+    border-radius: 8px;
+    padding: 5px 12px;
     background: linear-gradient(145deg, #1d4ed8, #2563eb);
     color: #fff;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
-    box-shadow: 0 8px 18px rgba(29, 78, 216, 0.24);
-    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 4px 12px rgba(29, 78, 216, 0.2);
   }
 
   .studio-trigger:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 12px 24px rgba(29, 78, 216, 0.32);
+    box-shadow: 0 6px 16px rgba(29, 78, 216, 0.28);
   }
 
-  .app-header__mark {
-    width: 30px;
-    height: 30px;
+  :global(.app-header__mark) {
+    width: 24px;
+    height: 24px;
     flex-shrink: 0;
+    display: block;
   }
 
   .app-header__title {
     display: flex;
     flex-direction: column;
-    line-height: 1.15;
+    line-height: 1.1;
+    min-width: 0;
   }
 
   .app-header__title-main {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     color: var(--text);
   }
 
   .app-header__title-sub {
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-style: italic;
     color: var(--text-muted);
-  }
-
-  .shortcuts-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--surface-muted);
-    color: var(--text);
-    font-size: 11.5px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .shortcuts-trigger:hover {
-    background: var(--blue-50);
-    border-color: var(--blue-200);
-    color: var(--blue-700);
-  }
-
-  .shortcuts-trigger__kbd {
-    padding: 1px 6px;
-    border-radius: 5px;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--blue-700);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: min(520px, 55vw);
   }
 
   .profile-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 10px 4px 4px;
+    gap: 7px;
+    padding: 2px 8px 2px 2px;
     border: 1px solid var(--border-strong);
     border-radius: 999px;
     background: var(--surface-muted);
     color: var(--text);
     cursor: pointer;
-    max-width: 200px;
+    max-width: 180px;
   }
 
   .profile-trigger:hover {
@@ -209,14 +162,14 @@
   }
 
   .profile-trigger__avatar {
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
     border-radius: 999px;
     background: var(--blue-700);
     color: #fff;
     display: grid;
     place-items: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     flex-shrink: 0;
   }
@@ -225,43 +178,25 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    line-height: 1.1;
+    line-height: 1.05;
     min-width: 0;
   }
 
   .profile-trigger__name {
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 700;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 120px;
+    max-width: 100px;
   }
 
   .profile-trigger__sub {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-  }
-
-  .pfizer-mark {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 17px;
-    font-weight: 700;
-    color: var(--blue-700);
-    letter-spacing: -0.01em;
-  }
-
-  .pfizer-mark__dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 999px;
-    background: var(--blue-700);
-    display: inline-block;
   }
 
   @media (max-width: 760px) {
@@ -272,6 +207,10 @@
     .app-header__brand--right {
       order: 3;
       justify-content: center;
+    }
+
+    .app-header__title-sub {
+      display: none;
     }
   }
 </style>

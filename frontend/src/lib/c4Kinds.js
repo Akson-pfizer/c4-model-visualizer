@@ -1,76 +1,76 @@
 // Visual + semantic metadata for every C4 element "kind" used across the demo layers.
-// Color is a secondary signal only — the stereotype label and shape family carry the
-// type distinction too, so nothing here is color-only (WCAG / Gestalt guidance).
+// Pastel fills stay inside Pfizer Brand Identity 2.0 (Blue 03/05/10, Cyan 10/30/50,
+// Teal, Lavender). Shape + stereotype still carry the primary type distinction.
 export const KIND_META = {
   person: {
     stereotype: 'Person',
     shape: 'pill',
-    bg: 'var(--blue-900)',
-    fg: '#ffffff',
-    border: 'var(--blue-900)'
+    bg: '#E8F2FF' /* Blue 10 */,
+    fg: '#000067' /* Blue 90 */,
+    border: '#68D1FF' /* Cyan 30 */
   },
   system: {
     stereotype: 'Software System',
     shape: 'rect',
-    bg: 'var(--blue-700)',
-    fg: '#ffffff',
-    border: 'var(--blue-700)'
+    bg: '#ECF6FF' /* Blue 03 */,
+    fg: '#000067',
+    border: '#0095FF' /* Cyan 50 */
   },
   systemExternal: {
     stereotype: 'Software System · external',
     shape: 'rect-dashed',
-    bg: 'var(--surface-sunken)',
-    fg: 'var(--text-muted)',
-    border: 'var(--border-strong)'
+    bg: '#EEF5FB' /* Blue 05 */,
+    fg: '#000067',
+    border: '#AEE3FF' /* Cyan 10 */
   },
   container: {
     stereotype: 'Container',
     shape: 'rect',
-    bg: 'var(--blue-600)',
-    fg: '#ffffff',
-    border: 'var(--blue-600)'
+    bg: '#AEE3FF' /* Cyan 10 */,
+    fg: '#000067',
+    border: '#0095FF' /* Cyan 50 */
   },
   containerDb: {
     stereotype: 'Container · database',
     shape: 'rect-db',
-    bg: 'var(--blue-500)',
-    fg: '#ffffff',
-    border: 'var(--blue-500)'
+    bg: '#D7F7F3' /* soft Teal tint */,
+    fg: '#000067',
+    border: '#00B7A5' /* Teal */
   },
   containerExternal: {
     stereotype: 'Container · external',
     shape: 'rect-dashed',
-    bg: 'var(--surface-sunken)',
-    fg: 'var(--text-muted)',
-    border: 'var(--border-strong)'
+    bg: '#EEF5FB',
+    fg: '#000067',
+    border: '#AEE3FF'
   },
   component: {
     stereotype: 'Component',
     shape: 'rect-accent',
-    bg: 'var(--blue-50)',
-    fg: 'var(--blue-900)',
-    border: 'var(--blue-300)'
+    bg: '#E8F2FF' /* Blue 10 */,
+    fg: '#000067',
+    border: '#68D1FF' /* Cyan 30 */
   },
   codeInterface: {
     stereotype: 'Interface',
     shape: 'rect-code',
-    bg: '#ffffff',
-    fg: 'var(--blue-700)',
-    border: 'var(--blue-300)'
+    bg: '#ECF6FF',
+    fg: '#0000C9' /* Blue 70 */,
+    border: '#68D1FF'
   },
   codeClass: {
     stereotype: 'Class',
     shape: 'rect-code',
-    bg: '#ffffff',
-    fg: 'var(--text)',
-    border: 'var(--border-strong)'
+    bg: '#EEF5FB',
+    fg: '#000067',
+    border: '#0095FF'
   },
   codeEnum: {
     stereotype: 'Enum',
     shape: 'rect-code',
-    bg: '#ffffff',
-    fg: 'var(--text-muted)',
-    border: 'var(--border)'
+    bg: '#F3EDFF' /* soft Lavender tint */,
+    fg: '#000067',
+    border: '#A68AFF' /* Lavender — sparingly */
   }
 };
 

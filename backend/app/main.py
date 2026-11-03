@@ -20,11 +20,17 @@ from app.agents import manager_agent
 from app.c4_service import generate_layer
 from app.cancel_registry import AnalysisCancelled, begin_job, cancel_job, end_job
 from app.catalog_store import catalog_store
-from app.config import settings
+from app.config import apply_llmhub_credentials, mask_api_key, settings
+from app.confluence_publish import (
+    ConfluencePublishError,
+    publish_documentation_to_confluence,
+)
 from app.doc_agent import documentation_agent
 from app.llmhub_adapter import (
     filter_chat_models,
+    get_adapter,
     list_models as llmhub_list_models,
+    reset_adapters,
 )
 from app.schemas import (
     AnalyzeRequest,
@@ -79,6 +85,10 @@ class ReferenceDocsRequest(BaseModel):
         default="auto",
         description="Documentation style: auto | sphinx | typedoc | markdown.",
     )
+    force: bool = Field(
+        default=False,
+        description="When true, regenerate even if a matching cache exists.",
+    )
 
 
 class CodeAnalysisRequest(BaseModel):
@@ -88,10 +98,73 @@ class CodeAnalysisRequest(BaseModel):
     )
 
 
+class ExplainComponentRequest(BaseModel):
+    id: str = Field(default="", description="Node id")
+    name: str = Field(description="Component / node display name")
+    kind: str = Field(default="", description="C4 kind")
+    layer: str = Field(default="", description="C4 layer id")
+    technology: str = Field(default="", description="Technology stack label")
+    description: str = Field(default="", description="Existing node description")
+    mode: str = Field(
+        default="compact",
+        description="compact (≤50 words) or deep (full architecture context).",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Optional LLMHub model id (must be in the configured/available list).",
+    )
+    layers_context: dict | None = Field(
+        default=None,
+        description="Optional C4 layers payload for deep explanations.",
+    )
+
+
+class DocsPublishRequest(BaseModel):
+    output_folder: str = Field(
+        description="Folder produced by /api/docs/generate (contains CONFLUENCE_*.md and images/png).",
+    )
+    page_id: str | None = Field(
+        default=None,
+        description="Confluence page id. Falls back to CONFLUENCE_PAGE_ID / URL parse.",
+    )
+    page_url: str | None = Field(
+        default=None,
+        description="Full Confluence page URL (used to derive page id / base URL).",
+    )
+    prefer: str = Field(
+        default="both",
+        description="Content mode: both | markdown | png",
+    )
+    title: str | None = Field(
+        default=None,
+        description="Optional page title override.",
+    )
+
+
+class DocsPipelineRequest(BaseModel):
+    project_path: str = Field(
+        description="Repository root to document (CI workspace path).",
+    )
+    output_folder: str | None = Field(
+        default=None,
+        description="Docs output folder (defaults to <project_path>/documentation).",
+    )
+    publish: bool = Field(
+        default=False,
+        description="When true, publish generated docs to Confluence after generate.",
+    )
+    page_id: str | None = None
+    page_url: str | None = None
+    prefer: str = "both"
+    title: str | None = None
+
+
 @app.get("/")
 def root() -> dict:
     return {
-        "service": "c4-model-visualizer multi-agent backend",
+        "service": "orthos-docs-service",
+        "product": "Orthos",
+        "mode": "api",
         "llmhub_base_url": settings.llmhub_base_url,
         "models": {
             "powerful": settings.model_powerful,
@@ -129,7 +202,10 @@ def root() -> dict:
             "/api/skills",
             "/api/analysis/run",
             "/api/sandbox/run",
+            "/api/explain/component",
             "/api/docs/generate",
+            "/api/docs/publish",
+            "/api/docs/pipeline",
             "/api/docs/reference",
             "/api/docs/reference/preview",
             "/api/c4/cancel",
@@ -139,6 +215,8 @@ def root() -> dict:
             "/api/catalog/{id}",
             "/api/catalog/{id}/open",
             "/api/catalog/profile",
+            "/api/llmhub/credentials",
+            "/api/llmhub/models",
         ],
     }
 
@@ -213,6 +291,162 @@ def run_sandbox_verification() -> dict:
     return skill_execute_sandbox_with_dummy_data()
 
 
+def _trim_words(text: str, max_words: int = 50) -> str:
+    words = (text or "").strip().split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(".,;:") + "…"
+
+
+def _summarize_layers_context(layers_context: dict | None, focus_name: str) -> str:
+    """Compact text digest of C4 layers for deep explain prompts."""
+    if not layers_context or not isinstance(layers_context, dict):
+        return "No additional layer context provided."
+    lines: list[str] = []
+    for layer_id in ("context", "container", "component", "code"):
+        layer = layers_context.get(layer_id) or {}
+        if not isinstance(layer, dict):
+            continue
+        nodes = layer.get("nodes") or []
+        if not isinstance(nodes, list):
+            continue
+        titles = []
+        for node in nodes[:18]:
+            if not isinstance(node, dict):
+                continue
+            data = node.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            label = str(data.get("name") or node.get("id") or "").strip()
+            if not label:
+                continue
+            kind = str(data.get("kind") or "").strip()
+            titles.append(f"{label} ({kind})" if kind else label)
+        if titles:
+            lines.append(f"{layer_id}: " + "; ".join(titles))
+        edges = layer.get("edges") or []
+        if isinstance(edges, list) and edges:
+            rels = []
+            for edge in edges[:12]:
+                if not isinstance(edge, dict):
+                    continue
+                src = str(edge.get("source") or "")
+                tgt = str(edge.get("target") or "")
+                label = str(edge.get("label") or "").strip()
+                if src and tgt:
+                    rels.append(f"{src}→{tgt}" + (f" ({label})" if label else ""))
+            if rels:
+                lines.append(f"{layer_id} relations: " + "; ".join(rels))
+    if not lines:
+        return "No additional layer context provided."
+    lines.append(f"Focus component: {focus_name}")
+    return "\n".join(lines)
+
+
+def _resolve_explain_model(requested: str | None, *, prefer_powerful: bool = False) -> str:
+    """Pick a chat model that exists in the configured LLMHub options.
+
+    Avoids hard-failing on defaults like ``gpt-4o`` when the provider does not
+    expose that model id.
+    """
+    options = filter_chat_models(list(settings.model_options))
+    allowed = set(options)
+
+    def _ok(candidate: str | None) -> str | None:
+        value = (candidate or "").strip()
+        if not value:
+            return None
+        if allowed and value not in allowed:
+            return None
+        return value
+
+    picked = _ok(requested)
+    if picked:
+        return picked
+    if prefer_powerful:
+        picked = _ok(settings.model_powerful)
+        if picked:
+            return picked
+    picked = _ok(settings.model_medium)
+    if picked:
+        return picked
+    if options:
+        return options[0]
+    return (settings.model_medium or "gpt-4.1-mini").strip()
+
+
+@app.post("/api/explain/component")
+def explain_component(request: ExplainComponentRequest) -> dict:
+    """LLMHub explanation of a selected C4 component (compact or deep)."""
+    if not settings.llmhub_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="LLMHub is not configured. Set LLMHUB_API_KEY in Profile settings.",
+        )
+    name = (request.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Component name is required.")
+
+    mode = (request.mode or "compact").strip().lower()
+    if mode not in {"compact", "deep"}:
+        raise HTTPException(status_code=400, detail="mode must be compact or deep")
+
+    model = _resolve_explain_model(request.model, prefer_powerful=(mode == "deep"))
+
+    if mode == "deep":
+        system = (
+            "You are a principal software architect explaining a C4 model component in depth. "
+            "Use the full architecture context. Cover: role, responsibilities, collaborators, "
+            "data/control flow, and why it exists. "
+            "Format with short paragraphs separated by blank lines. "
+            "You may use **bold** for component names. No bullet lists unless essential. Avoid fluff."
+        )
+        context_block = _summarize_layers_context(request.layers_context, name)
+        user = (
+            f"Deep-explain this C4 component using the architecture context.\n"
+            f"Name: {name}\n"
+            f"Kind: {request.kind or 'unknown'}\n"
+            f"Layer: {request.layer or 'unknown'}\n"
+            f"Technology: {request.technology or 'n/a'}\n"
+            f"Description: {request.description or 'n/a'}\n\n"
+            f"Architecture context:\n{context_block}\n"
+        )
+        max_words = 320
+    else:
+        system = (
+            "You explain software architecture components for busy engineers. "
+            "Reply in plain English only. Maximum 50 words. No bullets, no markdown."
+        )
+        user = (
+            f"Explain this C4 component briefly.\n"
+            f"Name: {name}\n"
+            f"Kind: {request.kind or 'unknown'}\n"
+            f"Layer: {request.layer or 'unknown'}\n"
+            f"Technology: {request.technology or 'n/a'}\n"
+            f"Description: {request.description or 'n/a'}\n"
+        )
+        max_words = 50
+
+    try:
+        adapter = get_adapter("c4-doc-agent")
+        raw = adapter.chat_text(system, user, model=model, temperature=0.2)
+        explanation = _trim_words(raw, max_words)
+        return {
+            "explanation": explanation,
+            "model": model,
+            "mode": mode,
+            "word_count": len(explanation.split()),
+            "component": {
+                "id": request.id,
+                "name": name,
+                "kind": request.kind,
+                "layer": request.layer,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/docs/generate")
 def generate_documentation(request: DocumentationRequest) -> dict:
     try:
@@ -222,6 +456,70 @@ def generate_documentation(request: DocumentationRequest) -> dict:
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/docs/publish")
+def publish_documentation(request: DocsPublishRequest) -> dict:
+    """Upload Orthos doc artifacts to an existing Confluence page (CI / service use)."""
+    prefer = (request.prefer or "both").strip().lower()
+    if prefer not in {"both", "markdown", "md", "png"}:
+        raise HTTPException(
+            status_code=400,
+            detail="prefer must be one of: both, markdown, png",
+        )
+    try:
+        return publish_documentation_to_confluence(
+            request.output_folder,
+            page_id=request.page_id,
+            page_url=request.page_url,
+            prefer="markdown" if prefer == "md" else prefer,
+            title_override=request.title,
+        )
+    except ConfluencePublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/docs/pipeline")
+def documentation_pipeline(request: DocsPipelineRequest) -> dict:
+    """Headless generate (+ optional Confluence publish) for CI on PR merge."""
+    project_path = request.project_path.strip()
+    if not project_path:
+        raise HTTPException(status_code=400, detail="project_path is required")
+    output_folder = (request.output_folder or "").strip() or f"{project_path.rstrip('/')}/documentation"
+
+    try:
+        generated = documentation_agent.generate_documentation_suite(
+            project_path=project_path,
+            output_folder=output_folder,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    result: dict = {"generate": generated, "publish": None}
+    if not request.publish:
+        return result
+
+    prefer = (request.prefer or "both").strip().lower()
+    if prefer not in {"both", "markdown", "md", "png"}:
+        raise HTTPException(
+            status_code=400,
+            detail="prefer must be one of: both, markdown, png",
+        )
+    try:
+        result["publish"] = publish_documentation_to_confluence(
+            output_folder,
+            page_id=request.page_id,
+            page_url=request.page_url,
+            prefer="markdown" if prefer == "md" else prefer,
+            title_override=request.title,
+        )
+    except ConfluencePublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return result
 
 
 @app.post("/api/docs/reference/preview")
@@ -264,6 +562,7 @@ def generate_code_reference_docs(request: ReferenceDocsRequest) -> dict:
             project_path=request.source,
             output_folder=request.output_folder,
             style=style,  # type: ignore[arg-type]
+            force=bool(request.force),
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -306,6 +605,56 @@ def generate_c4_hierarchy_model(request: ModelSourceRequest) -> HierarchyModelRe
 
 class ProfileUpdateRequest(BaseModel):
     display_name: str = Field(default="Architect", max_length=48)
+
+
+class LlmHubCredentialsUpdate(BaseModel):
+    api_key: str | None = Field(
+        default=None,
+        description="New LLMHub API key. Omit or null to keep the existing key.",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="LLMHub base URL (OpenAI-compatible /v1). Omit to keep current.",
+    )
+
+
+@app.get("/api/llmhub/credentials")
+def get_llmhub_credentials() -> dict:
+    """Return LLMHub connection settings with a masked API key (never the raw secret)."""
+    return {
+        "base_url": settings.llmhub_base_url,
+        "api_key_configured": bool(settings.llmhub_api_key),
+        "api_key_masked": mask_api_key(settings.llmhub_api_key),
+        "display_name": catalog_store.get_profile_name(),
+    }
+
+
+@app.put("/api/llmhub/credentials")
+def update_llmhub_credentials(request: LlmHubCredentialsUpdate) -> dict:
+    """Update LLMHub credentials at runtime and persist them to backend/.env."""
+    incoming_key = request.api_key
+    # Ignore accidental re-submit of the masked display value.
+    if incoming_key is not None:
+        masked = mask_api_key(settings.llmhub_api_key)
+        if incoming_key.strip() == "" and not settings.llmhub_api_key:
+            incoming_key = ""
+        elif (
+            incoming_key == masked
+            or (masked and incoming_key.startswith(masked[:4]) and "•" in incoming_key)
+        ):
+            incoming_key = None
+
+    try:
+        result = apply_llmhub_credentials(
+            api_key=incoming_key,
+            base_url=request.base_url,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    reset_adapters()
+    result["display_name"] = catalog_store.get_profile_name()
+    return result
 
 
 @app.get("/api/catalog")

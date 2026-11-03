@@ -148,23 +148,24 @@
   }
 
   .layer-select__button {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    min-width: 190px;
-    padding: 6px 36px 6px 14px;
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 3px 28px 3px 10px;
     background: var(--surface);
-    border: 1.5px solid var(--border-strong);
-    border-radius: 12px;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: none;
     cursor: pointer;
     position: relative;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease;
   }
 
   .layer-select__button:hover:not(:disabled) {
-    border-color: var(--accent);
+    border-color: var(--blue-500, var(--accent));
+    background: var(--blue-50, var(--accent-soft));
   }
 
   .layer-select__button:disabled {
@@ -179,20 +180,28 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--text-faint);
+    white-space: nowrap;
+  }
+
+  .layer-select__eyebrow::after {
+    content: '·';
+    margin-left: 6px;
+    color: var(--border-strong);
   }
 
   .layer-select__value {
-    font-size: 14px;
+    font-size: 12.5px;
     font-weight: 700;
     color: var(--text);
+    white-space: nowrap;
   }
 
   .layer-select__chevron {
     position: absolute;
-    right: 12px;
+    right: 9px;
     top: 50%;
-    width: 11px;
-    height: 8px;
+    width: 10px;
+    height: 7px;
     transform: translateY(-50%);
     color: var(--accent);
     transition: transform 0.18s ease;

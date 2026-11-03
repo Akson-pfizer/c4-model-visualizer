@@ -59,6 +59,7 @@ from app.c4_service import (
 from app.cancel_registry import check_cancelled
 from app.experience_store import ExperienceStore, fingerprint_repo
 from app.folder_classifier import ProjectPlan, classify_project, refine_with_llm
+from app.workflow_layout import apply_workflow_layout
 from app.layout_spacing import (
     BOUNDARY_GAP_X,
     BOUNDARY_GAP_Y,
@@ -171,6 +172,9 @@ class BaseLayerSubagent:
             extraction = self.extract_deterministic(inventory, parent_nodes)
 
         extraction = self._ensure_parent_links(extraction, parent_nodes)
+        # Shared logical check across every layer agent: place nodes in workflow order
+        # (actors → UI → auth/API → domain services → data → externals), not discovery order.
+        extraction = apply_workflow_layout(extraction, self.layer)
 
         if self.experience_store is not None:
             try:
@@ -1469,6 +1473,7 @@ class ComponentSubagent(BaseLayerSubagent):
                     inventory, containers, target_model
                 )
                 extraction = self._ensure_parent_links(extraction, parent_nodes)
+                extraction = apply_workflow_layout(extraction, self.layer)
                 if self.experience_store is not None:
                     try:
                         rel_paths = [
@@ -1871,6 +1876,7 @@ class CodeSubagent(BaseLayerSubagent):
                     inventory, selected, target_model
                 )
                 extraction = self._ensure_parent_links(extraction, parent_nodes)
+                extraction = apply_workflow_layout(extraction, self.layer)
                 if self.experience_store is not None:
                     try:
                         rel_paths = [

@@ -82,7 +82,9 @@
   }
 
   .c4-node.selected {
-    box-shadow: 0 0 0 2px var(--accent-soft);
+    box-shadow:
+      0 0 0 2px var(--edge-hot, #0095ff),
+      0 0 0 5px color-mix(in srgb, var(--edge-hot, #0095ff) 22%, transparent);
   }
 
   .c4-node.shape-pill {

@@ -1,15 +1,49 @@
 /** Shared LLMHub model list cache — survives SourceBar remounts. */
 
-/** @type {{ options: string[], preferred: string, status: string } | null} */
+/**
+ * @typedef {'online' | 'offline' | 'error' | 'local' | 'loading'} HubStatusKind
+ * @typedef {{ options: string[], preferred: string, status: string, statusKind: HubStatusKind }} HubModelsCache
+ */
+
+/** @type {HubModelsCache | null} */
 let cachedModels = null;
-/** @type {Promise<{ options: string[], preferred: string, status: string }> | null} */
+/** @type {Promise<HubModelsCache> | null} */
 let modelsInflight = null;
 
+/**
+ * @param {any} data
+ * @param {string[]} opts
+ * @returns {{ status: string, statusKind: HubStatusKind }}
+ */
 function statusFromPayload(data, opts) {
-  if (data.live_status === 'ok') return `LLMHub online · ${opts.length} models`;
-  if (data.live_status === 'unreachable') return 'LLMHub unreachable — using .env model list';
-  if (data.live_status === 'error') return 'LLMHub error — using .env model list';
-  return opts.length ? `${opts.length} models from .env` : 'No models configured in .env';
+  if (data.live_status === 'ok') {
+    return {
+      status: `LLMHub online · ${opts.length} models`,
+      statusKind: 'online'
+    };
+  }
+  if (data.live_status === 'unreachable') {
+    return {
+      status: 'LLMHub unreachable — using .env model list',
+      statusKind: 'offline'
+    };
+  }
+  if (data.live_status === 'error') {
+    return {
+      status: 'LLMHub error — using .env model list',
+      statusKind: 'error'
+    };
+  }
+  if (opts.length) {
+    return {
+      status: `${opts.length} models from .env`,
+      statusKind: 'local'
+    };
+  }
+  return {
+    status: 'No models configured in .env',
+    statusKind: 'error'
+  };
 }
 
 export function getCachedModels() {
@@ -25,17 +59,20 @@ export function loadLlmHubModels() {
       const data = await res.json().catch(() => ({}));
       const opts = Array.isArray(data.options) ? data.options : [];
       const preferred = data.default_medium || data.default_powerful || opts[0] || '';
+      const meta = statusFromPayload(data, opts);
       cachedModels = {
         options: opts,
         preferred,
-        status: statusFromPayload(data, opts)
+        status: meta.status,
+        statusKind: meta.statusKind
       };
       return cachedModels;
     } catch {
       cachedModels = {
         options: [],
         preferred: '',
-        status: 'Could not load /api/llmhub/models'
+        status: 'Could not load /api/llmhub/models',
+        statusKind: 'error'
       };
       return cachedModels;
     } finally {

@@ -13,6 +13,8 @@ user can build locally (``sphinx-build``, ``npx typedoc``, or open the Markdown)
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -21,6 +23,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.repo_scanner import IGNORED_DIRS, INCLUDED_EXTENSIONS
+
+_CACHE_FILENAME = ".orthos-reference-cache.json"
 
 DocStyle = Literal["sphinx", "typedoc", "markdown"]
 
@@ -438,10 +442,71 @@ def preview_reference_docs(
     }
 
 
+def _source_fingerprint(root: Path, files: list[Path], style: str) -> str:
+    """Stable fingerprint of source tree + style so we can reuse generated docs."""
+    hasher = hashlib.sha256()
+    hasher.update(str(root).encode("utf-8"))
+    hasher.update(b"|")
+    hasher.update(style.encode("utf-8"))
+    hasher.update(b"|")
+    for path in sorted(files, key=lambda p: str(p).lower()):
+        try:
+            st = path.stat()
+            rel = path.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            continue
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(b":")
+        hasher.update(str(int(st.st_mtime_ns)).encode("ascii"))
+        hasher.update(b":")
+        hasher.update(str(st.st_size).encode("ascii"))
+        hasher.update(b";")
+    return hasher.hexdigest()
+
+
+def _cache_path(out_dir: Path) -> Path:
+    return out_dir / _CACHE_FILENAME
+
+
+def _load_cached_reference(
+    out_dir: Path,
+    fingerprint: str,
+) -> dict[str, Any] | None:
+    path = _cache_path(out_dir)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("fingerprint") != fingerprint:
+        return None
+    index_file = str(payload.get("index_file") or "")
+    if not index_file or not Path(index_file).exists():
+        return None
+    payload = dict(payload)
+    payload["cached"] = True
+    payload["summary"] = (
+        f"Cached {payload.get('style_label', 'reference docs')} — "
+        f"{payload.get('symbol_count', 0)} symbols (unchanged source fingerprint)."
+    )
+    return payload
+
+
+def _write_reference_cache(out_dir: Path, payload: dict[str, Any]) -> None:
+    path = _cache_path(out_dir)
+    try:
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def generate_reference_docs(
     project_path: str | Path,
     output_folder: str | Path | None = None,
     style: DocStyle | Literal["auto"] = "auto",
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
     root = Path(project_path).expanduser().resolve()
     if not root.exists() or not root.is_dir():
@@ -453,13 +518,20 @@ def generate_reference_docs(
     if chosen not in {"sphinx", "typedoc", "markdown"}:
         chosen = detected
 
-    symbols = extract_symbols(root, files)
     out_dir = (
         Path(output_folder).expanduser().resolve()
         if output_folder
         else (root / "documentation" / "reference")
     )
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    fingerprint = _source_fingerprint(root, files, chosen)
+    if not force:
+        cached = _load_cached_reference(out_dir, fingerprint)
+        if cached is not None:
+            return cached
+
+    symbols = extract_symbols(root, files)
 
     if chosen == "sphinx":
         index_file, written, hint = _write_sphinx_project(
@@ -494,4 +566,8 @@ def generate_reference_docs(
     payload["detected_style"] = detected
     payload["file_count"] = len(files)
     payload["modules"] = _modules_payload(symbols)
+    payload["fingerprint"] = fingerprint
+    payload["cached"] = False
+    payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_reference_cache(out_dir, payload)
     return payload

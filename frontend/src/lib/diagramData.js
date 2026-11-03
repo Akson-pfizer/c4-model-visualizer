@@ -138,10 +138,10 @@ export function adaptRawLayer(raw, focusParentId = null) {
       )
     : allRawNodes;
 
-  // Reflow boundary positions when showing a single focused boundary so it sits cleanly at top-left
+  // Reflow a single focused boundary near origin — fitView centers the viewport.
   const normalizedBoundaries =
     hasFocusedSubset && filteredBoundaries.length === 1
-      ? [{ ...filteredBoundaries[0], position: { x: 260, y: 40 } }]
+      ? [{ ...filteredBoundaries[0], position: { x: 40, y: 40 } }]
       : filteredBoundaries;
 
   const boundaryNodes = normalizedBoundaries.map((b) => {

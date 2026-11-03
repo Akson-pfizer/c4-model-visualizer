@@ -7,9 +7,13 @@
   import DiagramCanvas from './lib/components/DiagramCanvas.svelte';
   import HierarchyTreeCanvas from './lib/components/HierarchyTreeCanvas.svelte';
   import DetailPanel from './lib/components/DetailPanel.svelte';
-  import PfizerLoader from './lib/components/PfizerLoader.svelte';
+  import OrthosLoader from './lib/components/OrthosLoader.svelte';
+  import FullscreenToggle from './lib/components/FullscreenToggle.svelte';
   import KeyboardShortcutsModal from './lib/components/KeyboardShortcutsModal.svelte';
   import CatalogPage from './lib/components/CatalogPage.svelte';
+  import CacheConfirmToast from './lib/components/CacheConfirmToast.svelte';
+  import ProfileSettingsModal from './lib/components/ProfileSettingsModal.svelte';
+  import ExplainChat from './lib/components/ExplainChat.svelte';
   import BuildRepo from './lib/components/build/BuildRepo.svelte';
   import CodeAnalysisView from './lib/components/analysis/CodeAnalysisView.svelte';
   import ReferenceDocsView from './lib/components/docs/ReferenceDocsView.svelte';
@@ -23,7 +27,16 @@
     getPrevLayerId
   } from './lib/diagramData.js';
   import { matchShortcutCommand } from './lib/keyboardShortcuts.js';
-  import { fetchProfile, getProfile } from './lib/projectCatalog.js';
+  import {
+    clearActiveStudio,
+    fetchProfile,
+    findCatalogEntryBySource,
+    formatViewedAt,
+    getActiveStudio,
+    getProfile,
+    openCatalogEntry,
+    rememberActiveStudio
+  } from './lib/projectCatalog.js';
   import {
     navigateToView,
     titleForView,
@@ -56,6 +69,17 @@
   let navPastStack = $state.raw([]);
   let navFutureStack = $state.raw([]);
   let shortcutsOpen = $state(false);
+  let profileSettingsOpen = $state(false);
+  let explainOpen = $state(false);
+  /** Shared with SourceBar + ExplainChat — must be a live LLMHub model id. */
+  let selectedLlmModel = $state('');
+  /** Stable fullscreen shell — must not remount on drill-down / layer key changes. */
+  let vizFullscreenEl = $state(/** @type {HTMLDivElement | null} */ (null));
+  /** @type {any} */
+  let diagramCanvasRef = $state(null);
+  let canUndoMove = $state(false);
+  let canRedoMove = $state(false);
+  let restoringStudio = $state(false);
   /** @type {'catalog' | 'studio'} — Catalog is `/`; Studio is `/studio`. */
   let appView = $state(viewFromPath());
   let profileName = $state(getProfile().display_name);
@@ -75,8 +99,17 @@
   /** @type {AbortController | null} */
   let analyzeAbort = null;
   let analyzeJobId = $state(/** @type {string | null} */ (null));
+  /** @type {{ id: number, entryId: string, source: string, sourceType: 'local' | 'github', repoName: string, lastAnalyzedAt: string, llmOptions: { use_llm: boolean, model: string | null } } | null} */
+  let cacheConfirm = $state(null);
 
-  let hasAnalyzed = $derived(Boolean(activeSource.trim()));
+  let hasAnalyzed = $derived.by(() => {
+    if (!activeSource.trim()) return false;
+    return Object.values(rawByLayer || {}).some(
+      (entry) => Array.isArray(entry?.nodes) && entry.nodes.length > 0
+    );
+  });
+  let canUndo = $derived(navPastStack.length > 0 || canUndoMove);
+  let canRedo = $derived(navFutureStack.length > 0 || canRedoMove);
   let layer = $derived(
     getLayer(selectedLayerId, rawByLayer, focusedParentNode?.id ?? null)
   );
@@ -160,6 +193,55 @@
     focusedParentNode = next.focusedParentNode;
     selectedNode = null;
     return true;
+  }
+
+  /** Prefer undoing a node move; fall back to layer navigation. */
+  function undoVisualizer() {
+    if (diagramCanvasRef?.undoMove?.()) {
+      showShortcutBadge('Undid node move');
+      return true;
+    }
+    if (undoNavigation()) {
+      showShortcutBadge('Undid layer navigation');
+      return true;
+    }
+    return false;
+  }
+
+  function redoVisualizer() {
+    if (diagramCanvasRef?.redoMove?.()) {
+      showShortcutBadge('Redid node move');
+      return true;
+    }
+    if (redoNavigation()) {
+      showShortcutBadge('Redid layer navigation');
+      return true;
+    }
+    return false;
+  }
+
+  function handleDiagramHistoryState(state) {
+    canUndoMove = Boolean(state?.canUndoMove);
+    canRedoMove = Boolean(state?.canRedoMove);
+  }
+
+  function breadcrumbGoLayer(layerId) {
+    if (layerId === selectedLayerId && !focusedParentNode) return;
+    pushNavHistory();
+    triggerLoader();
+    viewMode = 'layer';
+    selectedLayerId = layerId;
+    focusedParentNode = null;
+    selectedNode = null;
+  }
+
+  function breadcrumbGoUp() {
+    if (focusedParentNode) {
+      clearFocusedDrillDown();
+      return;
+    }
+    const prev = getPrevLayerId(selectedLayerId);
+    if (prev) handleLayerChange(prev);
   }
 
   function triggerLoader() {
@@ -316,15 +398,9 @@
 
     if (tab === 'read') {
       if (cmd === 'undo') {
-        if (undoNavigation()) {
-          event.preventDefault();
-          showShortcutBadge('Undid layer navigation (⌘Z / Ctrl+Z)');
-        }
+        if (undoVisualizer()) event.preventDefault();
       } else if (cmd === 'redo') {
-        if (redoNavigation()) {
-          event.preventDefault();
-          showShortcutBadge('Redid layer navigation (⌘Y / Ctrl+Y)');
-        }
+        if (redoVisualizer()) event.preventDefault();
       } else if (cmd === 'copy') {
         if (copySelectedNodeSummary()) {
           event.preventDefault();
@@ -339,6 +415,10 @@
         handleViewModeChange(viewMode === 'tree' ? 'layer' : 'tree');
         showShortcutBadge(`Switched to ${viewMode === 'tree' ? 'Tree' : 'Layer'} view`);
       } else if (cmd === 'escape') {
+        // While the diagram is fullscreen, Esc only exits fullscreen (browser default).
+        if (document.fullscreenElement) {
+          return;
+        }
         if (selectedNode) {
           event.preventDefault();
           selectedNode = null;
@@ -380,11 +460,53 @@
     };
   }
 
+  function dismissCacheConfirm() {
+    cacheConfirm = null;
+  }
+
+  async function useCachedCatalogEntry(entryId) {
+    dismissCacheConfirm();
+    sourceError = null;
+    try {
+      const result = await openCatalogEntry(entryId);
+      openCachedCatalogProject(result);
+      showShortcutBadge('Loaded cached analysis');
+    } catch (err) {
+      sourceError = formatFriendlyError(err, 'Catalog cache');
+    }
+  }
+
   async function analyzeRepositorySource(
     sourceInput,
     selectedType = 'local',
-    llmOptions = { use_llm: false, model: null }
+    llmOptions = { use_llm: false, model: null },
+    { force = false } = {}
   ) {
+    const cleaned = String(sourceInput || '').trim();
+    const type = selectedType === 'github' ? 'github' : 'local';
+    const opts = {
+      use_llm: Boolean(llmOptions?.use_llm),
+      model: llmOptions?.model || null
+    };
+
+    if (!force) {
+      const prior = await findCatalogEntryBySource(cleaned, type);
+      if (prior?.id) {
+        cacheConfirm = {
+          id: Date.now(),
+          entryId: prior.id,
+          source: cleaned,
+          sourceType: type,
+          repoName: prior.repo_name || prior.display_name || cleaned,
+          lastAnalyzedAt: prior.last_analyzed_at || '',
+          llmOptions: opts
+        };
+        return;
+      }
+    } else {
+      dismissCacheConfirm();
+    }
+
     if (analyzeAbort) {
       analyzeAbort.abort();
     }
@@ -404,10 +526,10 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source: sourceInput,
-          source_type: selectedType,
-          use_llm: Boolean(llmOptions?.use_llm),
-          model: llmOptions?.model || null,
+          source: cleaned,
+          source_type: type,
+          use_llm: opts.use_llm,
+          model: opts.model,
           job_id: jobId
         }),
         signal: controller.signal
@@ -422,6 +544,19 @@
       if (controller.signal.aborted) return;
       applyAnalyzedModel(payload);
       // Full payload is persisted by the backend into the Architect Catalog DB.
+      try {
+        const saved = await findCatalogEntryBySource(cleaned, type);
+        if (saved?.id) {
+          rememberActiveStudio({
+            entryId: saved.id,
+            source: cleaned,
+            sourceType: type,
+            repoName: payload.repo_name || saved.repo_name
+          });
+        }
+      } catch {
+        /* catalog lookup is best-effort */
+      }
     } catch (err) {
       if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
         sourceError = 'Repository Analysis stopped.';
@@ -472,6 +607,8 @@
     selectedNode = null;
     navPastStack = [];
     navFutureStack = [];
+    canUndoMove = false;
+    canRedoMove = false;
     viewMode = 'layer';
     selectedLayerId = 'context';
     tab = 'read';
@@ -486,6 +623,14 @@
     }
     sourceError = null;
     applyAnalyzedModel(payload);
+    if (result?.entry?.id) {
+      rememberActiveStudio({
+        entryId: result.entry.id,
+        source: payload.source,
+        sourceType: payload.source_type,
+        repoName: payload.repo_name
+      });
+    }
     setAppView('studio');
     showShortcutBadge(`Opened ${payload.repo_name} from catalog`);
   }
@@ -506,8 +651,11 @@
     selectedNode = null;
     navPastStack = [];
     navFutureStack = [];
+    canUndoMove = false;
+    canRedoMove = false;
     viewMode = 'layer';
     selectedLayerId = 'context';
+    clearActiveStudio();
   }
 
   function setAppView(view, { replace = false } = {}) {
@@ -525,6 +673,16 @@
 
   function openStudio() {
     setAppView('studio');
+    if (hasAnalyzed || restoringStudio) return;
+    const active = getActiveStudio();
+    if (!active?.entryId) return;
+    restoringStudio = true;
+    openCatalogEntry(active.entryId)
+      .then((result) => openCachedCatalogProject(result))
+      .catch(() => clearActiveStudio())
+      .finally(() => {
+        restoringStudio = false;
+      });
   }
 
   function handlePopState() {
@@ -558,6 +716,23 @@
     // Normalize unknown paths (e.g. /catalog) onto the canonical slug.
     setAppView(viewFromPath(), { replace: true });
     window.addEventListener('popstate', handlePopState);
+
+    // Restore last catalog selection into the Visualizer after reload.
+    const active = getActiveStudio();
+    if (active?.entryId && viewFromPath() === 'studio') {
+      restoringStudio = true;
+      openCatalogEntry(active.entryId)
+        .then((result) => {
+          openCachedCatalogProject(result);
+        })
+        .catch(() => {
+          clearActiveStudio();
+        })
+        .finally(() => {
+          restoringStudio = false;
+        });
+    }
+
     return () => window.removeEventListener('popstate', handlePopState);
   });
 
@@ -572,12 +747,34 @@
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
+{#if cacheConfirm}
+  {#key cacheConfirm.id}
+    <CacheConfirmToast
+      title="Already analyzed"
+      detail={`“${cacheConfirm.repoName}” was analyzed${cacheConfirm.lastAnalyzedAt ? ` on ${formatViewedAt(cacheConfirm.lastAnalyzedAt)}` : ''}. Using the catalog cache unless you re-analyze.`}
+      durationSec={8}
+      onUseCache={() => {
+        const entryId = cacheConfirm?.entryId;
+        if (entryId) useCachedCatalogEntry(entryId);
+      }}
+      onReanalyze={() => {
+        const pending = cacheConfirm;
+        if (!pending) return;
+        analyzeRepositorySource(pending.source, pending.sourceType, pending.llmOptions, {
+          force: true
+        });
+      }}
+      onDismiss={dismissCacheConfirm}
+    />
+  {/key}
+{/if}
+
 <AppHeader
   {profileName}
   appView={appView}
-  onOpenShortcuts={() => (shortcutsOpen = true)}
   onOpenCatalog={openCatalogPage}
   onOpenStudio={openStudio}
+  onOpenProfile={() => (profileSettingsOpen = true)}
 />
 
 {#if appView === 'catalog'}
@@ -590,8 +787,7 @@
     source={activeSource}
     analyzing={analyzingSource}
     error={sourceError}
-    {activeRepoName}
-    agents={agentReports}
+    bind:selectedModel={selectedLlmModel}
     onAnalyze={analyzeRepositorySource}
     onStop={stopAnalysis}
     onResetDemo={resetToEmptyWorkspace}
@@ -648,26 +844,22 @@
                   {/if}
                 </p>
                 <div class="read-area__actions">
-                  <div class="nav-history-strip" role="group" aria-label="Layer navigation undo and redo">
+                  <div class="nav-history-strip" role="group" aria-label="Undo and redo">
                     <button
                       type="button"
                       class="nav-history-btn"
-                      disabled={!hasAnalyzed || navPastStack.length === 0}
-                      title="Undo layer navigation (⌘Z / Ctrl+Z)"
-                      onclick={() => {
-                        if (undoNavigation()) showShortcutBadge('Undid layer navigation');
-                      }}
+                      disabled={!hasAnalyzed || !canUndo}
+                      title="Undo node move or layer navigation (⌘Z / Ctrl+Z)"
+                      onclick={() => undoVisualizer()}
                     >
                       ↶ Undo
                     </button>
                     <button
                       type="button"
                       class="nav-history-btn"
-                      disabled={!hasAnalyzed || navFutureStack.length === 0}
-                      title="Redo layer navigation (⌘Y / Ctrl+Y)"
-                      onclick={() => {
-                        if (redoNavigation()) showShortcutBadge('Redid layer navigation');
-                      }}
+                      disabled={!hasAnalyzed || !canRedo}
+                      title="Redo node move or layer navigation (⌘Y / Ctrl+Y)"
+                      onclick={() => redoVisualizer()}
                     >
                       ↷ Redo
                     </button>
@@ -712,8 +904,54 @@
                   />
                 </div>
               </header>
-              <div class="read-area__canvas">
+              <div
+                class="read-area__canvas"
+                class:read-area__canvas--ready={hasAnalyzed}
+                bind:this={vizFullscreenEl}
+              >
                 {#if hasAnalyzed}
+                  {#if viewMode === 'layer'}
+                    <nav class="c4-breadcrumb" aria-label="C4 layer breadcrumb">
+                      {#each LAYER_ORDER as layerId, idx (layerId)}
+                        {@const reachable = LAYER_ORDER.indexOf(selectedLayerId) >= idx}
+                        {#if idx > 0}
+                          <span class="c4-breadcrumb__sep" aria-hidden="true">›</span>
+                        {/if}
+                        <button
+                          type="button"
+                          class="c4-breadcrumb__crumb"
+                          class:is-current={selectedLayerId === layerId && !focusedParentNode}
+                          disabled={!reachable}
+                          onclick={() => breadcrumbGoLayer(layerId)}
+                        >
+                          {layerId}
+                        </button>
+                      {/each}
+                      {#if focusedParentNode}
+                        <span class="c4-breadcrumb__sep" aria-hidden="true">›</span>
+                        <span class="c4-breadcrumb__focus" title={focusedParentNode.name}>
+                          {focusedParentNode.name}
+                        </span>
+                        <button
+                          type="button"
+                          class="c4-breadcrumb__up"
+                          onclick={breadcrumbGoUp}
+                          title="Go back to previous layer"
+                        >
+                          ↑ Up
+                        </button>
+                      {:else if getPrevLayerId(selectedLayerId)}
+                        <button
+                          type="button"
+                          class="c4-breadcrumb__up"
+                          onclick={breadcrumbGoUp}
+                          title="Go back to previous layer"
+                        >
+                          ↑ Up
+                        </button>
+                      {/if}
+                    </nav>
+                  {/if}
                   {#key `${selectedLayerId}-${viewMode}-${sourceRevision}-${focusedParentNode?.id ?? 'all'}`}
                     {#if viewMode === 'tree'}
                       <HierarchyTreeCanvas
@@ -722,25 +960,39 @@
                         onNodeSelect={handleNodeSelect}
                         onNodeDoubleClick={handleNodeDoubleClick}
                         onReady={handleDiagramReady}
+                        enableFullscreen={false}
                       />
                     {:else}
                       <DiagramCanvas
+                        bind:this={diagramCanvasRef}
                         {layer}
                         {loadGeneration}
                         onNodeSelect={handleNodeSelect}
                         onNodeDoubleClick={handleNodeDoubleClick}
                         onBoundaryClick={handleBoundaryClick}
+                        onHistoryStateChange={handleDiagramHistoryState}
                         onReady={handleDiagramReady}
+                        enableFullscreen={false}
                       />
                     {/if}
                   {/key}
+                  <div class="read-area__fs">
+                    <FullscreenToggle target={vizFullscreenEl} />
+                  </div>
                 {:else}
                   <div class="canvas-idle" role="status">
                     <p class="canvas-idle__eyebrow">C4 canvas locked</p>
-                    <h2 class="canvas-idle__title">Analyze a repository first</h2>
+                    <h2 class="canvas-idle__title">
+                      {restoringStudio ? 'Restoring last project…' : 'Analyze a repository first'}
+                    </h2>
                     <p class="canvas-idle__body">
-                      Enter a local path or GitHub URL above, then press Analyze.
-                      The Visualizer stays inactive until the multi-agent run finishes.
+                      {#if restoringStudio}
+                        Reloading the catalog selection you had open in Orthos Studio.
+                      {:else}
+                        Enter a local path or GitHub URL above, then press Analyze.
+                        The Visualizer stays inactive until the multi-agent run finishes.
+                        Opening a project from the Catalog also unlocks this canvas.
+                      {/if}
                     </p>
                   </div>
                 {/if}
@@ -749,7 +1001,6 @@
             <DetailPanel
               {layer}
               selectedNode={hasAnalyzed ? selectedNode : null}
-              {activeSource}
               onDrillDown={handleNodeDoubleClick}
               onNavigateUpper={handleBoundaryClick}
               onClose={() => (selectedNode = null)}
@@ -757,11 +1008,14 @@
           </div>
           {#if loading || analyzingSource}
             <div class="layer-loader" out:fade={{ duration: 180 }}>
-              <PfizerLoader label={loaderLabel} />
+              <OrthosLoader label={loaderLabel} />
             </div>
           {/if}
         </div>
-      </main>
+          <footer class="app-main__footer">
+            <span>© {new Date().getFullYear()} Pfizer Inc. All rights reserved.</span>
+          </footer>
+        </main>
     {/if}
   </div>
 
@@ -796,7 +1050,40 @@
 </div>
 {/if}
 
+{#if appView === 'studio'}
+  <ExplainChat
+    selectedNode={selectedNode}
+    bind:open={explainOpen}
+    layersContext={rawByLayer}
+    currentLayerId={selectedLayerId}
+    model={selectedLlmModel}
+  />
+{/if}
+
+<button
+  type="button"
+  class="shortcuts-fab"
+  title="shortcuts"
+  aria-label="Shortcuts"
+  onclick={() => (shortcutsOpen = true)}
+>
+  <span class="shortcuts-fab__glyph" aria-hidden="true">⌘</span>
+</button>
+
 <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
+<ProfileSettingsModal
+  open={profileSettingsOpen}
+  {profileName}
+  onClose={() => (profileSettingsOpen = false)}
+  onSaved={(result) => {
+    if (result?.display_name) profileName = result.display_name;
+    showShortcutBadge(
+      result?.api_key_configured
+        ? 'LLMHub credentials saved'
+        : 'Profile saved (LLMHub key empty)'
+    );
+  }}
+/>
 
 <style>
   .app-tabs-bar {
@@ -864,8 +1151,52 @@
   .app-main {
     flex: 1;
     min-height: 0;
-    padding: 16px 24px 20px;
+    padding: 12px 24px 10px;
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .app-main > .layer-stage {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .app-main__footer {
+    flex-shrink: 0;
+    padding: 2px 2px 4px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-align: center;
+    letter-spacing: 0.01em;
+  }
+
+  .shortcuts-fab {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 55;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--blue-700);
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+  }
+
+  .shortcuts-fab:hover {
+    background: var(--blue-50);
+    border-color: var(--blue-500);
+  }
+
+  .shortcuts-fab__glyph {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
   }
 
   .read-area {
@@ -887,42 +1218,48 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 8px 14px;
+    gap: 10px;
+    min-height: 36px;
+    padding: 4px 10px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    font-size: 11.5px;
     color: var(--text-muted);
   }
 
   .read-area__hint {
     margin: 0;
+    line-height: 1.25;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .read-area__actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
     flex-shrink: 0;
   }
 
   .nav-history-strip {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    padding: 2px;
-    border-radius: 8px;
+    gap: 2px;
+    padding: 1px;
+    border-radius: 7px;
     background: var(--surface-muted);
     border: 1px solid var(--border);
   }
 
   .nav-history-btn {
-    padding: 4px 8px;
+    padding: 2px 7px;
     border: none;
-    border-radius: 6px;
+    border-radius: 5px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -938,13 +1275,13 @@
   }
 
   .focus-reset-btn {
-    padding: 5px 10px;
-    font-size: 11.5px;
+    padding: 2px 8px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--blue-700);
     background: var(--accent-soft);
     border: 1px solid var(--blue-200);
-    border-radius: 8px;
+    border-radius: 7px;
     cursor: pointer;
   }
 
@@ -954,20 +1291,20 @@
 
   .view-toggle {
     display: inline-flex;
-    padding: 3px;
+    padding: 1px;
     background: var(--surface-muted);
     border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    gap: 2px;
+    border-radius: 7px;
+    gap: 1px;
   }
 
   .view-toggle__btn {
-    padding: 5px 11px;
+    padding: 2px 9px;
     border: none;
-    border-radius: 7px;
+    border-radius: 5px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -975,20 +1312,123 @@
   .view-toggle__btn.active {
     background: var(--blue-700);
     color: #ffffff;
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
   }
 
   .read-area__canvas {
+    position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
+    background: var(--canvas-bg);
+  }
+
+  .c4-breadcrumb {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    z-index: 8;
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-width: min(72%, 560px);
+    padding: 5px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(6px);
+  }
+
+  .c4-breadcrumb__sep {
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  .c4-breadcrumb__crumb {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--blue-700);
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: capitalize;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 5px;
+  }
+
+  .c4-breadcrumb__crumb:hover:not(:disabled) {
+    background: var(--blue-50);
+  }
+
+  .c4-breadcrumb__crumb.is-current {
+    color: var(--text);
+    background: var(--blue-50);
+  }
+
+  .c4-breadcrumb__crumb:disabled {
+    color: var(--text-faint);
+    cursor: default;
+  }
+
+  .c4-breadcrumb__focus {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .c4-breadcrumb__up {
+    margin-left: 4px;
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--blue-700);
+    font-size: 11px;
+    font-weight: 750;
+    border-radius: 6px;
+    padding: 2px 7px;
+    cursor: pointer;
+  }
+
+  .c4-breadcrumb__up:hover {
+    background: var(--blue-50);
+    border-color: var(--blue-500);
+  }
+
+  .read-area__canvas--ready {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .read-area__canvas:fullscreen {
+    border-radius: 0;
+    border: none;
+    width: 100vw;
+    height: 100vh;
+    background: var(--canvas-bg, #f4f7fb);
+  }
+
+  .read-area__fs {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 6;
   }
 
   .read-area--inactive {
     background: color-mix(in srgb, var(--canvas-bg) 70%, #dbe4f0);
   }
 
-  .read-area__canvas :global(.canvas) {
+  .read-area__canvas :global(.canvas),
+  .read-area__canvas :global(.tree-canvas) {
     border: none;
     border-radius: 0;
     box-shadow: none;

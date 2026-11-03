@@ -79,6 +79,10 @@ Rules:
 - Keep the whole diagram under 15 elements (boundaries + nodes) — this is a key C4 density rule.
 - Lay nodes out so they don't overlap: increment x/y in steps of at least 260/180 pixels between
   nodes, and size any boundary generously enough to contain its children with ~40px margin.
+- WORKFLOW ORDER (required): place nodes left→right / top→bottom in real runtime flow —
+  (1) people/actors, (2) UI/web clients, (3) auth/gateway, (4) domain APIs & agent services,
+  (5) databases/stores, (6) external systems. Edges must reinforce that flow (user→UI→API→DB/external).
+  Do NOT dump nodes alphabetically or in folder-discovery order.
 - Only infer what the source code actually supports — if you're not confident about a
   technology or relationship, omit the detail rather than inventing specifics.
 - If the repository genuinely doesn't contain enough information for this layer, return the

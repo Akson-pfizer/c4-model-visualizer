@@ -75,3 +75,55 @@ docker compose up --build
 cd c4-model-visualizer/backend
 ./.venv/bin/python scripts/run_doc_agent.py
 ```
+
+---
+
+## Orthos as a service (CI / other repos)
+
+Treat the backend as a headless docs module: generate architecture docs on merge, then publish to a Confluence page.
+
+### Service APIs
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/docs/generate` | Build MD + Mermaid + SVG/PNG for a `project_path` |
+| `POST /api/docs/publish` | Upload PNGs + update Confluence page from an output folder |
+| `POST /api/docs/pipeline` | Generate, then optionally publish (`publish: true`) |
+
+Example pipeline call:
+
+```bash
+curl -s -X POST http://localhost:8000/api/docs/pipeline \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project_path": "/path/to/other-repo",
+    "output_folder": "/path/to/other-repo/documentation",
+    "publish": true,
+    "page_url": "https://your-org.atlassian.net/wiki/spaces/X/pages/123456/Architecture",
+    "prefer": "both"
+  }'
+```
+
+### Headless CLI
+
+```bash
+cd c4-model-visualizer/backend
+# generate only
+python scripts/orthos_service.py generate --project-path /path/to/repo
+
+# generate + publish (uses CONFLUENCE_* env vars)
+python scripts/orthos_service.py pipeline --project-path /path/to/repo --publish \
+  --page-url "https://your-org.atlassian.net/wiki/spaces/X/pages/123456/Architecture"
+
+# or call a remote Orthos backend
+python scripts/orthos_service.py pipeline --api-url http://orthos:8000 \
+  --project-path /path/to/repo --publish --page-id 123456
+```
+
+### GitHub Actions
+
+Workflow template: [`.github/workflows/orthos-docs.yml`](.github/workflows/orthos-docs.yml)
+
+Set secrets: `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN`, `CONFLUENCE_PAGE_ID` (or `CONFLUENCE_PAGE_URL`). Optional: `LLMHUB_API_KEY`, `ORTHOS_API_URL`.
+
+On push to `main`/`master`, the job regenerates `documentation/` and updates the Confluence page.

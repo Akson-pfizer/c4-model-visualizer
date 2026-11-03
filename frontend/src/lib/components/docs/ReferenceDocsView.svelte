@@ -13,6 +13,11 @@
   let selectedModule = $state(/** @type {string | null} */ (null));
   let query = $state('');
   let lastSource = $state('');
+  /** In-memory cache keyed by source|style so regenerating is a no-op until forced. */
+  let docsCache = $state.raw(/** @type {Record<string, any>} */ ({}));
+
+  let cacheKey = $derived(`${activeSource.trim()}|${docsStyle}`);
+  let hasGenerated = $derived(Boolean(docsCache[cacheKey]));
 
   let modules = $derived(preview?.modules ?? []);
   let filteredModules = $derived.by(() => {
@@ -40,6 +45,22 @@
     Object.entries(preview?.language_counts || {}).sort((a, b) => b[1] - a[1])
   );
 
+  function applyGenerated(data, { fromCache = false } = {}) {
+    preview = {
+      ...(preview || {}),
+      ...data,
+      modules: data.modules || preview?.modules || []
+    };
+    notice =
+      (fromCache || data.cached
+        ? `Using cached docs — ${data.style_label || 'reference'}: ${data.symbol_count} symbols`
+        : `${data.style_label}: ${data.symbol_count} symbols → ${data.index_file}`) +
+      (data.build_hint ? `\nBuild: ${data.build_hint}` : '');
+    if (data.modules?.[0]?.module) {
+      selectedModule = data.modules[0].module;
+    }
+  }
+
   async function loadPreview() {
     const source = activeSource.trim();
     if (!source) {
@@ -63,6 +84,12 @@
       preview = data;
       lastSource = source;
       selectedModule = data.modules?.[0]?.module ?? null;
+
+      // Restore prior generate result for this source/style without rewriting files.
+      const mem = docsCache[`${source}|${docsStyle}`];
+      if (mem) {
+        applyGenerated(mem, { fromCache: true });
+      }
     } catch (err) {
       preview = null;
       error = formatFriendlyError(err, 'Reference Docs');
@@ -71,38 +98,45 @@
     }
   }
 
-  async function generateDocs() {
+  /**
+   * @param {{ force?: boolean, silent?: boolean }} [opts]
+   */
+  async function generateDocs(opts = {}) {
+    const force = Boolean(opts.force);
+    const silent = Boolean(opts.silent);
     const source = activeSource.trim();
     if (!source) {
       error = 'Analyze a local repository first.';
       return;
     }
+
+    const key = `${source}|${docsStyle}`;
+    if (!force && docsCache[key]) {
+      applyGenerated(docsCache[key], { fromCache: true });
+      return;
+    }
+
     generating = true;
-    error = null;
-    notice = null;
+    if (!silent) {
+      error = null;
+      notice = null;
+    }
     try {
       const res = await fetch('/api/docs/reference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, style: docsStyle })
+        body: JSON.stringify({ source, style: docsStyle, force })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.detail || `Generate failed (${res.status})`);
       }
-      preview = {
-        ...(preview || {}),
-        ...data,
-        modules: data.modules || preview?.modules || []
-      };
-      notice =
-        `${data.style_label}: ${data.symbol_count} symbols → ${data.index_file}` +
-        (data.build_hint ? `\nBuild: ${data.build_hint}` : '');
-      if (data.modules?.[0]?.module) {
-        selectedModule = data.modules[0].module;
-      }
+      docsCache = { ...docsCache, [key]: data };
+      applyGenerated(data, { fromCache: Boolean(data.cached) });
     } catch (err) {
-      error = formatFriendlyError(err, 'Reference Docs');
+      if (!silent) {
+        error = formatFriendlyError(err, 'Reference Docs');
+      }
     } finally {
       generating = false;
     }
@@ -115,6 +149,7 @@
     } else if (!source) {
       preview = null;
       lastSource = '';
+      notice = null;
     }
   });
 </script>
@@ -136,6 +171,7 @@
       </h1>
       <p class="docs-view__sub">
         Language-aware docs from the analyzed repository — Sphinx for Python, TypeDoc for JS/TS, Markdown otherwise.
+        Generated files are cached until the source tree changes.
       </p>
     </div>
 
@@ -161,9 +197,15 @@
         type="button"
         class="docs-view__btn"
         disabled={generating || loading || !activeSource.trim()}
-        onclick={generateDocs}
+        onclick={() => generateDocs({ force: hasGenerated })}
       >
-        {generating ? 'Writing files…' : 'Generate docs'}
+        {#if generating}
+          Writing files…
+        {:else if hasGenerated}
+          Regenerate docs
+        {:else}
+          Generate docs
+        {/if}
       </button>
     </div>
   </header>
@@ -188,6 +230,9 @@
   {:else if preview}
     <div class="docs-view__meta">
       <span class="docs-view__pill">{preview.style_label}</span>
+      {#if preview.cached || (hasGenerated && notice?.startsWith('Using cached'))}
+        <span class="docs-view__pill docs-view__pill--cache">Cached</span>
+      {/if}
       <span>{preview.symbol_count} symbols</span>
       <span>{preview.file_count ?? 0} files</span>
       <span>{modules.length} modules</span>
@@ -416,6 +461,11 @@
     color: var(--blue-700);
     font-weight: 700;
     font-size: 11px;
+  }
+
+  .docs-view__pill--cache {
+    background: #ecfdf5;
+    color: #047857;
   }
 
   .docs-view__lang {

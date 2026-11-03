@@ -1,13 +1,13 @@
 <script>
-  import { DEFAULT_AGENT_ROSTER, validateSource } from '../sourceValidation.js';
+  import { validateSource } from '../sourceValidation.js';
   import { getCachedModels, loadLlmHubModels } from '../llmhubModels.js';
+  import InfoToast from './InfoToast.svelte';
 
   let {
     source = '',
     analyzing = false,
     error = null,
-    activeRepoName = 'No repository loaded',
-    agents = [],
+    selectedModel = $bindable(''),
     onAnalyze,
     onStop,
     onResetDemo
@@ -18,12 +18,16 @@
   /** @type {'local' | 'github'} */
   let sourceType = $state('local');
   let touched = $state(false);
-  let showAgents = $state(false);
-  let useLlm = $state(false);
   /** @type {string[]} */
   let modelOptions = $state(seed?.options ?? []);
-  let selectedModel = $state(seed?.preferred ?? '');
+  if (!selectedModel && seed?.preferred) {
+    selectedModel = seed.preferred;
+  }
   let modelStatus = $state(seed?.status ?? 'Loading LLMHub models…');
+  /** @type {'online' | 'offline' | 'error' | 'local' | 'loading'} */
+  let statusKind = $state(seed?.statusKind ?? 'loading');
+  /** @type {{ id: number, title: string, detail: string, tone: 'info' | 'success' | 'warn' | 'error' } | null} */
+  let actionToast = $state(null);
 
   $effect(() => {
     if (source) {
@@ -40,6 +44,7 @@
         selectedModel = cached.preferred;
       }
       modelStatus = cached.status;
+      statusKind = cached.statusKind;
     });
     return () => {
       cancelled = true;
@@ -48,57 +53,45 @@
 
   let validation = $derived(validateSource(inputVal, sourceType));
   let showValidationError = $derived((touched || inputVal.trim().length > 0) && !validation.valid);
-  let displayAgents = $derived(agents.length > 0 ? agents : DEFAULT_AGENT_ROSTER);
+  let pathPlaceholder = $derived(
+    sourceType === 'local'
+      ? 'Enter a local directory path (e.g. /Users/.../repo or ./project)'
+      : 'Enter a GitHub repository URL (e.g. https://github.com/owner/repo)'
+  );
 
-  /**
-   * Compact agent blurbs for the strip cards — full text stays on title hover.
-   * @param {string} raw
-   * @param {number} [maxLen]
-   */
-  function condenseSummary(raw, maxLen = 110) {
-    let text = String(raw || '').replace(/\s+/g, ' ').trim();
-    if (!text) return 'No summary.';
-
-    // Drop the long hierarchy sermon that often trails supervisor reports.
-    text = text
-      .replace(/\s*Yes—each node should have exactly one valid parent[\s\S]*$/i, '')
-      .replace(/\s*preserving a consistent Context→Container→Component→[\s\S]*$/i, '')
-      .trim();
-
-    const metrics = text.match(/(\d+)\s*nodes?.*?(\d+)\s*edges?/i);
-    const first = text.split(/(?<=[.!?])\s+/)[0] || text;
-    let base = first.length <= maxLen ? first : `${first.slice(0, maxLen - 1).trimEnd()}…`;
-    if (metrics && !/nodes?/i.test(base)) {
-      base = `${base.replace(/\.*$/, '')} · ${metrics[1]}n/${metrics[2]}e`;
-    }
-    return base;
-  }
-
-  /** @param {string} role */
-  function shortRole(role) {
-    const text = String(role || '').trim();
-    if (text.length <= 42) return text;
-    return `${text.slice(0, 40).trimEnd()}…`;
+  function notify(title, detail = '', tone = /** @type {'info'} */ ('info')) {
+    actionToast = { id: Date.now(), title, detail, tone };
   }
 
   function submit(event) {
     event.preventDefault();
     touched = true;
     if (!validation.valid || analyzing) return;
+    notify(
+      'Analysis started',
+      `Running multi-agent pipeline with ${selectedModel || 'LLMHub'}.`,
+      'info'
+    );
     onAnalyze?.(inputVal.trim(), sourceType, {
-      use_llm: useLlm,
-      model: useLlm ? selectedModel || null : null
+      use_llm: true,
+      model: selectedModel || null
     });
   }
 
   function handleReset() {
     touched = false;
     inputVal = '';
-    useLlm = false;
+    notify('Source cleared', 'Path reset.', 'success');
     onResetDemo?.();
+  }
+
+  function handleStop() {
+    notify('Analysis stopped', 'The running job was cancelled.', 'warn');
+    onStop?.();
   }
 </script>
 
+<!-- source-bar -->
 <div class="source-bar-wrapper" aria-label="Source code repository controls">
   <form class="source-top-div" onsubmit={submit} novalidate>
     <div class="source-section source-section--path">
@@ -112,23 +105,18 @@
           class="source-section__input"
           class:invalid={showValidationError}
           class:valid={inputVal.trim().length > 0 && validation.valid}
-          placeholder={sourceType === 'local'
-            ? '/Users/.../repo  or  ./folder'
-            : 'https://github.com/owner/repo'}
+          placeholder={pathPlaceholder}
           bind:value={inputVal}
           oninput={() => (touched = true)}
           aria-invalid={showValidationError}
-          aria-describedby="source-validation-msg"
+          aria-describedby={showValidationError ? 'source-validation-msg' : undefined}
           disabled={analyzing}
         />
-        <span
-          id="source-validation-msg"
-          class="source-section__validation"
-          class:is-error={showValidationError}
-          class:is-valid={inputVal.trim().length > 0 && validation.valid}
-        >
-          {validation.message}
-        </span>
+        {#if showValidationError}
+          <span id="source-validation-msg" class="source-section__validation is-error">
+            {validation.message}
+          </span>
+        {/if}
       </div>
     </div>
 
@@ -139,39 +127,43 @@
       <div class="source-section__select-wrap">
         <select
           id="repo-source-type"
-          class="source-section__select"
+          class="source-section__select source-section__select--type"
           bind:value={sourceType}
           onchange={() => (touched = true)}
           disabled={analyzing}
         >
           <option value="local">Local</option>
-          <option value="github">Github</option>
+          <option value="github" disabled>Github</option>
         </select>
       </div>
     </div>
 
     <div class="source-section source-section--llm">
-      <label class="source-section__label" for="repo-llm-model">
-        3 · LLMHub
-      </label>
+      <div class="source-section__label-row">
+        <label class="source-section__label" for="repo-llm-model">3 · LLMHub</label>
+        <span class="hub-status" title={modelStatus}>
+          <span
+            class="hub-dot"
+            class:is-online={statusKind === 'online'}
+            class:is-local={statusKind === 'local'}
+            class:is-offline={statusKind === 'offline' || statusKind === 'loading'}
+            class:is-error={statusKind === 'error'}
+            aria-label={modelStatus}
+            role="img"
+          ></span>
+          <span class="hub-status__tip" role="tooltip">{modelStatus}</span>
+        </span>
+      </div>
       <div class="source-section__llm-row">
-        <label class="source-section__toggle">
-          <input
-            type="checkbox"
-            bind:checked={useLlm}
-            disabled={analyzing || modelOptions.length === 0}
-          />
-          <span>Use LLM</span>
-        </label>
         <select
           id="repo-llm-model"
-          class="source-section__select"
+          class="source-section__select source-section__select--model"
           bind:value={selectedModel}
-          disabled={analyzing || !useLlm || modelOptions.length === 0}
+          disabled={analyzing || modelOptions.length === 0}
           aria-label="LLMHub model"
         >
           {#if modelOptions.length === 0}
-            <option value="">No models in .env</option>
+            <option value="">No models</option>
           {:else}
             {#each modelOptions as mid (mid)}
               <option value={mid}>{mid}</option>
@@ -179,115 +171,91 @@
           {/if}
         </select>
       </div>
-      <span class="source-section__hint">{modelStatus}</span>
     </div>
 
     <div class="source-section source-section--actions">
       <span class="source-section__label">4 · Actions</span>
       <div class="source-section__buttons">
         {#if analyzing}
-          <button
-            type="button"
-            class="source-bar__stop"
-            onclick={() => onStop?.()}
-            aria-label="Stop analysis"
-          >
+          <button type="button" class="source-bar__stop" onclick={handleStop} aria-label="Stop analysis">
             Stop
           </button>
         {:else}
-          <button
-            type="submit"
-            class="source-bar__submit"
-            disabled={!validation.valid}
-          >
+          <button type="submit" class="source-bar__submit" disabled={!validation.valid}>
             Analyze
           </button>
         {/if}
-        <button
-          type="button"
-          class="source-bar__reset"
-          disabled={analyzing}
-          onclick={handleReset}
-        >
+        <button type="button" class="source-bar__reset" disabled={analyzing} onclick={handleReset}>
           Clear
         </button>
       </div>
     </div>
   </form>
 
-  <div class="source-bar__meta">
-    <span class="source-bar__active">
-      Active Model: <strong>{activeRepoName}</strong>
-    </span>
-
-    <button
-      type="button"
-      class="source-bar__agents-toggle"
-      aria-expanded={showAgents}
-      onclick={() => (showAgents = !showAgents)}
-    >
-      {agents.length > 0
-        ? `Multi-Agent Pipeline (${agents.length} agents ✓)`
-        : 'Multi-Agent Pipeline: 1 Manager · 1 Supervisor · 4 Layer Subagents'}
-      <span>{showAgents ? '▴' : '▾'}</span>
-    </button>
-  </div>
-
   {#if error}
     <p class="source-bar__error" role="alert">{error}</p>
   {/if}
-
-  {#if showAgents}
-    <div class="agent-strip" aria-label="Multi-agent hierarchy status">
-      {#each displayAgents as agent (agent.agent_id)}
-        <div class="agent-card" title={agent.summary || agent.role}>
-          <div class="agent-card__top">
-            <span class="agent-card__id">{agent.agent_id}</span>
-            {#if agent.layer}
-              <span class="agent-card__layer">{agent.layer}</span>
-            {/if}
-          </div>
-          <span class="agent-card__role">{shortRole(agent.role)}</span>
-          <p class="agent-card__summary">{condenseSummary(agent.summary)}</p>
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
+
+{#if actionToast}
+  {#key actionToast.id}
+    <InfoToast
+      title={actionToast.title}
+      detail={actionToast.detail}
+      tone={actionToast.tone}
+      durationSec={10}
+      onClose={() => (actionToast = null)}
+    />
+  {/key}
+{/if}
 
 <style>
   .source-bar-wrapper {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px 24px;
+    gap: 6px;
+    padding: 6px 24px 8px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
 
   .source-top-div {
     display: grid;
-    grid-template-columns: minmax(240px, 1.2fr) 150px minmax(220px, 1fr) auto;
-    align-items: start;
-    gap: 14px;
-    padding: 10px 14px;
+    grid-template-columns: minmax(180px, 1.2fr) 108px minmax(112px, 148px) auto;
+    align-items: end;
+    gap: 8px;
+    padding: 5px 8px;
     background: var(--surface-muted);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
   }
 
   .source-section {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     min-width: 0;
   }
 
   .source-section--type,
   .source-section--llm,
   .source-section--actions {
-    padding-left: 14px;
+    padding-left: 10px;
     border-left: 1px solid var(--border);
+  }
+
+  .source-section--llm {
+    max-width: 148px;
+  }
+
+  .source-section--actions {
+    justify-self: start;
+  }
+
+  .source-section__label-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .source-section__llm-row {
@@ -296,25 +264,78 @@
     gap: 8px;
   }
 
-  .source-section__toggle {
+  .hub-status {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12.5px;
-    font-weight: 700;
-    color: var(--text);
-    white-space: nowrap;
-    cursor: pointer;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    cursor: help;
+    flex-shrink: 0;
   }
 
-  .source-section__hint {
-    font-size: 10.5px;
-    color: var(--text-faint);
+  .hub-status__tip {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    min-width: 160px;
+    max-width: 240px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #f8fafc;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: center;
+    white-space: normal;
+    box-shadow: var(--shadow-md);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+    z-index: 40;
+  }
+
+  .hub-status:hover .hub-status__tip,
+  .hub-status:focus-within .hub-status__tip {
+    opacity: 1;
+  }
+
+  .hub-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #94a3b8;
+    box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+    flex-shrink: 0;
+  }
+
+  .hub-dot.is-online {
+    background: #16a34a;
+    box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.22);
+  }
+
+  .hub-dot.is-local {
+    background: #0d9488;
+    box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.22);
+  }
+
+  .hub-dot.is-offline {
+    background: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22);
+  }
+
+  .hub-dot.is-error {
+    background: #dc2626;
+    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
   }
 
   @media (max-width: 960px) {
     .source-top-div {
       grid-template-columns: 1fr;
+      align-items: stretch;
     }
 
     .source-section--type,
@@ -322,13 +343,13 @@
     .source-section--actions {
       padding-left: 0;
       border-left: none;
-      padding-top: 8px;
+      padding-top: 6px;
       border-top: 1px solid var(--border);
     }
   }
 
   .source-section__label {
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -338,17 +359,18 @@
   .source-section__field {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
   }
 
   .source-section__input {
     width: 100%;
-    padding: 7px 12px;
-    border: 1.5px solid var(--border-strong);
-    border-radius: 9px;
+    max-width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
     background: var(--surface);
     color: var(--text);
-    font-size: 12.5px;
+    font-size: 11.5px;
     font-family: var(--mono);
   }
 
@@ -367,17 +389,11 @@
   }
 
   .source-section__validation {
-    font-size: 11px;
-    color: var(--text-faint);
+    font-size: 10.5px;
   }
 
   .source-section__validation.is-error {
     color: #dc2626;
-    font-weight: 600;
-  }
-
-  .source-section__validation.is-valid {
-    color: var(--blue-700);
     font-weight: 600;
   }
 
@@ -387,14 +403,28 @@
 
   .source-section__select {
     width: 100%;
-    padding: 7px 12px;
-    border: 1.5px solid var(--border-strong);
-    border-radius: 9px;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
     background: var(--surface);
     color: var(--text);
-    font-size: 13px;
+    font-size: 11.5px;
     font-weight: 700;
     cursor: pointer;
+  }
+
+  .source-section__select--type {
+    max-width: 108px;
+  }
+
+  .source-section__select--model {
+    max-width: 132px;
+    width: 132px;
+  }
+
+  .source-section__select option:disabled {
+    color: #94a3b8;
   }
 
   .source-section__select:focus {
@@ -405,16 +435,16 @@
   .source-section__buttons {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .source-bar__submit {
-    padding: 7px 16px;
+    padding: 5px 12px;
     border: none;
-    border-radius: 9px;
+    border-radius: 7px;
     background: var(--blue-700);
     color: #fff;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
@@ -426,28 +456,24 @@
   }
 
   .source-bar__stop {
-    padding: 7px 16px;
+    padding: 5px 12px;
     border: none;
-    border-radius: 9px;
+    border-radius: 7px;
     background: #b91c1c;
     color: #fff;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
   }
 
-  .source-bar__stop:hover {
-    background: #991b1b;
-  }
-
   .source-bar__reset {
-    padding: 7px 13px;
+    padding: 5px 10px;
     border: 1px solid var(--border-strong);
-    border-radius: 9px;
+    border-radius: 7px;
     background: var(--surface);
     color: var(--blue-700);
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
@@ -458,133 +484,13 @@
     background: var(--blue-50);
   }
 
-  .source-bar__meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .source-bar__agents-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 10px;
-    border: 1px solid var(--blue-200);
-    border-radius: 999px;
-    background: var(--blue-50);
-    color: var(--blue-700);
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
   .source-bar__error {
     margin: 0;
-    padding: 6px 10px;
-    border-radius: 8px;
+    padding: 5px 9px;
+    border-radius: 7px;
     background: #fef2f2;
     border: 1px solid #fecaca;
     color: #b91c1c;
     font-size: 12px;
-  }
-
-  .agent-strip {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
-    gap: 8px;
-    padding-top: 4px;
-    width: 100%;
-    min-width: 0;
-  }
-
-  .agent-card {
-    min-width: 0;
-    max-width: 100%;
-    padding: 8px 10px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--surface-muted);
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    overflow: hidden;
-  }
-
-  .agent-card__top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .agent-card__id {
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--blue-700);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .agent-card__layer {
-    flex-shrink: 0;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: var(--blue-50);
-    color: var(--blue-700);
-    border: 1px solid var(--blue-200);
-  }
-
-  .agent-card__role {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text);
-    line-height: 1.25;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .agent-card__summary {
-    margin: 0;
-    font-size: 10.5px;
-    line-height: 1.3;
-    color: var(--text-muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    word-break: break-word;
-  }
-
-  @media (max-width: 720px) {
-    .agent-strip {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 860px) {
-    .source-top-div {
-      grid-template-columns: 1fr;
-    }
-
-    .source-section--type,
-    .source-section--actions {
-      padding-left: 0;
-      border-left: none;
-      padding-top: 8px;
-      border-top: 1px solid var(--border);
-    }
   }
 </style>

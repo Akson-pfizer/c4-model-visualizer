@@ -1,15 +1,15 @@
 <script>
   import { kindMeta } from '../c4Kinds.js';
-  import { formatFriendlyError } from '../analysisCatalog.js';
 
   let {
     layer,
     selectedNode,
-    activeSource = '',
     onDrillDown,
     onNavigateUpper,
     onClose
   } = $props();
+
+  let collapsed = $state(false);
 
   let boundaryNodes = $derived(
     (layer?.nodes ?? []).filter((n) => n.type === 'c4Boundary')
@@ -20,184 +20,164 @@
     return boundaryNodes.find((b) => b.id === selectedNode.parentId) ?? null;
   });
 
-  let isCodeLayer = $derived(layer?.layer === 'code');
-  let docsBusy = $state(false);
-  let docsStyle = $state('auto');
-  let docsMessage = $state(/** @type {string | null} */ (null));
-  let docsError = $state(/** @type {string | null} */ (null));
+  let collapsedLabel = $derived.by(() => {
+    if (selectedNode?.data?.name) return selectedNode.data.name;
+    return layer?.subtitle || layer?.title || 'Details';
+  });
 
-  async function generateReferenceDocs() {
-    const source = (activeSource || '').trim();
-    if (!source) {
-      docsError = 'Analyze a local repository first, then generate reference docs from the Code layer.';
-      docsMessage = null;
-      return;
-    }
-    docsBusy = true;
-    docsError = null;
-    docsMessage = null;
-    try {
-      const response = await fetch('/api/docs/reference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, style: docsStyle })
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || `Backend returned status ${response.status}`);
-      }
-      docsMessage =
-        `${payload.style_label}: ${payload.symbol_count} symbols → ${payload.index_file}` +
-        (payload.build_hint ? `\nBuild: ${payload.build_hint}` : '');
-    } catch (err) {
-      docsError = formatFriendlyError(err, 'Reference Docs');
-    } finally {
-      docsBusy = false;
-    }
+  function toggleCollapsed() {
+    collapsed = !collapsed;
   }
 </script>
 
-<aside class="panel" aria-label="Diagram details">
-  {#if selectedNode}
-    {@const meta = kindMeta(selectedNode.data.kind)}
-    <div class="panel__header">
-      <span class="panel__eyebrow">«{meta.stereotype}»</span>
-      <button class="panel__close" type="button" onclick={onClose} aria-label="Clear selection">✕</button>
-    </div>
-    <h2 class="panel__title">{selectedNode.data.name}</h2>
-    {#if selectedNode.data.technology}
-      <p class="panel__tech">{selectedNode.data.technology}</p>
-    {/if}
-    <p class="panel__desc">{selectedNode.data.description}</p>
-
-    {#if parentBoundary}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div
-        class="panel__upper-box"
-        class:clickable={Boolean(parentBoundary.data.targetUpperLayer && onNavigateUpper)}
-        role={parentBoundary.data.targetUpperLayer && onNavigateUpper ? 'button' : undefined}
-        tabindex={parentBoundary.data.targetUpperLayer && onNavigateUpper ? 0 : -1}
-        title={parentBoundary.data.targetUpperLayer
-          ? `Click to go up to the ${parentBoundary.data.targetUpperLayer} layer`
-          : undefined}
-        onclick={() => {
-          if (parentBoundary.data.targetUpperLayer && onNavigateUpper) {
-            onNavigateUpper(parentBoundary);
-          }
-        }}
-        onkeydown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && parentBoundary.data.targetUpperLayer && onNavigateUpper) {
-            e.preventDefault();
-            onNavigateUpper(parentBoundary);
-          }
-        }}
-      >
-        <span class="panel__upper-badge">
-          ⤢ Zoomed Inside Upper Layer ({parentBoundary.data.upperLayer || 'Parent'})
-          {#if parentBoundary.data.targetUpperLayer}
-            · ↑ Click to go up
+<aside class="panel" class:panel--collapsed={collapsed} aria-label="Diagram details">
+  <div class="panel__chrome">
+    {#if !collapsed}
+      <div class="panel__header">
+        {#if selectedNode}
+          {@const meta = kindMeta(selectedNode.data.kind)}
+          <span class="panel__eyebrow">«{meta.stereotype}»</span>
+        {:else}
+          <span class="panel__eyebrow">{layer.title} layer</span>
+        {/if}
+        <div class="panel__chrome-actions">
+          <button
+            class="panel__collapse"
+            type="button"
+            onclick={toggleCollapsed}
+            aria-expanded={!collapsed}
+            aria-label="Collapse details"
+            title="Collapse"
+          >
+            ›
+          </button>
+          {#if selectedNode && onClose}
+            <button class="panel__close" type="button" onclick={onClose} aria-label="Clear selection"
+              >✕</button
+            >
           {/if}
-        </span>
-        <strong class="panel__upper-title">{parentBoundary.data.label}</strong>
-        {#if parentBoundary.data.subtitle}
-          <span class="panel__upper-sub">{parentBoundary.data.subtitle}</span>
-        {/if}
-        {#if parentBoundary.data.description}
-          <p class="panel__upper-desc">{parentBoundary.data.description}</p>
-        {/if}
+        </div>
       </div>
-    {/if}
-
-    {#if selectedNode.data.nextLayer && onDrillDown}
+    {:else}
       <button
         type="button"
-        class="panel__drill-btn"
-        onclick={() => onDrillDown(selectedNode)}
+        class="panel__expand"
+        onclick={toggleCollapsed}
+        aria-expanded="false"
+        aria-label="Expand details"
+        title={collapsedLabel}
       >
-        ⤢ Zoom into {selectedNode.data.nextLayer} layer →
+        <span class="panel__expand-chevron">‹</span>
+        <span class="panel__expand-label">{collapsedLabel}</span>
       </button>
     {/if}
-  {:else}
-    <div class="panel__header">
-      <span class="panel__eyebrow">{layer.title} layer</span>
-    </div>
-    <h2 class="panel__title">{layer.subtitle}</h2>
-    <p class="panel__desc">{layer.description}</p>
-    {#if layer.note}
-      <p class="panel__note">{layer.note}</p>
-    {/if}
+  </div>
 
-    {#if boundaryNodes.length > 0}
-      <div class="panel__boundaries">
-        <span class="panel__boundaries-title">
-          ⤢ Zoomed-In Transparent Boundaries ({boundaryNodes.length})
-        </span>
-        <ul class="panel__boundaries-list">
-          {#each boundaryNodes as b (b.id)}
-            <li class="panel__boundary-item">
-              {#if b.data.targetUpperLayer && onNavigateUpper}
-                <button
-                  type="button"
-                  class="panel__boundary-btn"
-                  title="Click to go up to the {b.data.targetUpperLayer} layer ({b.data.label})"
-                  onclick={() => onNavigateUpper(b)}
-                >
-                  <span class="panel__boundary-name">
-                    {b.data.label}
-                    <span class="panel__boundary-up">↑ {b.data.targetUpperLayer}</span>
-                  </span>
+  {#if !collapsed}
+    {#if selectedNode}
+      <h2 class="panel__title">{selectedNode.data.name}</h2>
+      {#if selectedNode.data.technology}
+        <p class="panel__tech">{selectedNode.data.technology}</p>
+      {/if}
+      <p class="panel__desc">{selectedNode.data.description}</p>
+
+      {#if parentBoundary}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div
+          class="panel__upper-box"
+          class:clickable={Boolean(parentBoundary.data.targetUpperLayer && onNavigateUpper)}
+          role={parentBoundary.data.targetUpperLayer && onNavigateUpper ? 'button' : undefined}
+          tabindex={parentBoundary.data.targetUpperLayer && onNavigateUpper ? 0 : -1}
+          title={parentBoundary.data.targetUpperLayer
+            ? `Click to go up to the ${parentBoundary.data.targetUpperLayer} layer`
+            : undefined}
+          onclick={() => {
+            if (parentBoundary.data.targetUpperLayer && onNavigateUpper) {
+              onNavigateUpper(parentBoundary);
+            }
+          }}
+          onkeydown={(e) => {
+            if (
+              (e.key === 'Enter' || e.key === ' ') &&
+              parentBoundary.data.targetUpperLayer &&
+              onNavigateUpper
+            ) {
+              e.preventDefault();
+              onNavigateUpper(parentBoundary);
+            }
+          }}
+        >
+          <span class="panel__upper-badge">
+            ⤢ Zoomed Inside Upper Layer ({parentBoundary.data.upperLayer || 'Parent'})
+            {#if parentBoundary.data.targetUpperLayer}
+              · ↑ Click to go up
+            {/if}
+          </span>
+          <strong class="panel__upper-title">{parentBoundary.data.label}</strong>
+          {#if parentBoundary.data.subtitle}
+            <span class="panel__upper-sub">{parentBoundary.data.subtitle}</span>
+          {/if}
+          {#if parentBoundary.data.description}
+            <p class="panel__upper-desc">{parentBoundary.data.description}</p>
+          {/if}
+        </div>
+      {/if}
+
+      {#if selectedNode.data.nextLayer && onDrillDown}
+        <button
+          type="button"
+          class="panel__drill-btn"
+          onclick={() => onDrillDown(selectedNode)}
+        >
+          ⤢ Zoom into {selectedNode.data.nextLayer} layer →
+        </button>
+      {/if}
+    {:else}
+      <h2 class="panel__title">{layer.subtitle}</h2>
+      <p class="panel__desc">{layer.description}</p>
+      {#if layer.note}
+        <p class="panel__note">{layer.note}</p>
+      {/if}
+
+      {#if boundaryNodes.length > 0}
+        <div class="panel__boundaries">
+          <span class="panel__boundaries-title">
+            ⤢ Zoomed-In Transparent Boundaries ({boundaryNodes.length})
+          </span>
+          <ul class="panel__boundaries-list">
+            {#each boundaryNodes as b (b.id)}
+              <li class="panel__boundary-item">
+                {#if b.data.targetUpperLayer && onNavigateUpper}
+                  <button
+                    type="button"
+                    class="panel__boundary-btn"
+                    title="Click to go up to the {b.data.targetUpperLayer} layer ({b.data.label})"
+                    onclick={() => onNavigateUpper(b)}
+                  >
+                    <span class="panel__boundary-name">
+                      {b.data.label}
+                      <span class="panel__boundary-up">↑ {b.data.targetUpperLayer}</span>
+                    </span>
+                    {#if b.data.subtitle}
+                      <span class="panel__boundary-meta">{b.data.subtitle}</span>
+                    {/if}
+                  </button>
+                {:else}
+                  <span class="panel__boundary-name">{b.data.label}</span>
                   {#if b.data.subtitle}
                     <span class="panel__boundary-meta">{b.data.subtitle}</span>
                   {/if}
-                </button>
-              {:else}
-                <span class="panel__boundary-name">{b.data.label}</span>
-                {#if b.data.subtitle}
-                  <span class="panel__boundary-meta">{b.data.subtitle}</span>
                 {/if}
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      </div>
-    {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
 
-    <p class="panel__hint">Select any box on the canvas to see its full description and upper-layer parent here.</p>
-  {/if}
-
-  {#if isCodeLayer}
-    <div class="panel__docs" aria-label="Code-layer reference documentation">
-      <span class="panel__boundaries-title">Code Reference Docs</span>
-      <p class="panel__desc">
-        Generate Sphinx (Python), TypeDoc/JSDoc (TS/JS), or Markdown API docs from the code layer.
+      <p class="panel__hint">
+        Select any box on the canvas to see its full description and upper-layer parent here.
       </p>
-      <label class="panel__docs-label" for="ref-docs-style">Documentation style</label>
-      <select
-        id="ref-docs-style"
-        class="panel__docs-select"
-        bind:value={docsStyle}
-        disabled={docsBusy}
-      >
-        <option value="auto">Auto (from language mix)</option>
-        <option value="sphinx">Sphinx (Python)</option>
-        <option value="typedoc">TypeDoc / JSDoc</option>
-        <option value="markdown">Markdown API reference</option>
-      </select>
-      <button
-        type="button"
-        class="panel__docs-btn"
-        disabled={docsBusy}
-        onclick={generateReferenceDocs}
-      >
-        {docsBusy ? 'Generating…' : 'Generate Reference Docs'}
-      </button>
-      {#if docsMessage}
-        <p class="panel__docs-ok">{docsMessage}</p>
-      {/if}
-      {#if docsError}
-        <p class="panel__docs-err" role="alert">{docsError}</p>
-      {/if}
-    </div>
+    {/if}
   {/if}
 </aside>
 
@@ -216,12 +196,31 @@
     height: fit-content;
     max-height: 100%;
     overflow-y: auto;
+    transition: width 0.18s ease;
+  }
+
+  .panel--collapsed {
+    width: 44px;
+    padding: 10px 6px;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  .panel__chrome {
+    flex-shrink: 0;
   }
 
   .panel__header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+  }
+
+  .panel__chrome-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
   }
 
   .panel__eyebrow {
@@ -232,20 +231,52 @@
     text-transform: uppercase;
   }
 
+  .panel__collapse,
   .panel__close {
     border: none;
     background: transparent;
     color: var(--text-faint);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1;
-    padding: 4px;
+    padding: 4px 6px;
     border-radius: 6px;
   }
 
+  .panel__collapse:hover,
   .panel__close:hover {
     background: var(--surface-sunken);
     color: var(--text);
+  }
+
+  .panel__expand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 4px 0;
+    color: var(--blue-700);
+  }
+
+  .panel__expand-chevron {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .panel__expand-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    max-height: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .panel__title {
@@ -258,71 +289,13 @@
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--text-muted);
+    overflow-wrap: anywhere;
   }
 
   .panel__desc {
     font-size: 12.5px;
     color: var(--text-muted);
     line-height: 1.5;
-  }
-
-  .panel__docs {
-    margin-top: 10px;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .panel__docs-label {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .panel__docs-select {
-    width: 100%;
-    padding: 7px 10px;
-    border: 1.5px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text);
-    font-size: 12.5px;
-  }
-
-  .panel__docs-btn {
-    padding: 8px 12px;
-    border: none;
-    border-radius: 9px;
-    background: var(--blue-700);
-    color: #fff;
-    font-size: 12.5px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .panel__docs-btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .panel__docs-ok {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: var(--blue-700);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .panel__docs-err {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: #b91c1c;
   }
 
   .panel__note {
@@ -348,7 +321,9 @@
 
   .panel__upper-box.clickable {
     cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
   }
 
   .panel__upper-box.clickable:hover {

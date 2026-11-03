@@ -145,6 +145,11 @@ def get_adapter(agent_id: str) -> LLMHubAdapter:
     return LLMHubAdapter(settings.adapter_config(agent_id))
 
 
+def reset_adapters() -> None:
+    """Drop cached adapters so new credentials / base URL take effect."""
+    get_adapter.cache_clear()
+
+
 def is_hub_reachable() -> bool:
     """Cheap reachability probe using the Manager adapter."""
     return get_adapter("c4-manager").is_reachable()
