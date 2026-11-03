@@ -16,6 +16,8 @@
   import ExplainChat from './lib/components/ExplainChat.svelte';
   import BuildRepo from './lib/components/build/BuildRepo.svelte';
   import CodeAnalysisView from './lib/components/analysis/CodeAnalysisView.svelte';
+  import CodeQualityDashboard from './lib/components/analysis/CodeQualityDashboard.svelte';
+  import DesignGuideView from './lib/components/analysis/DesignGuideView.svelte';
   import ReferenceDocsView from './lib/components/docs/ReferenceDocsView.svelte';
   import { formatFriendlyError } from './lib/analysisCatalog.js';
   import {
@@ -46,7 +48,9 @@
   const TABS = [
     { id: 'read', label: 'Visualizer' },
     { id: 'build', label: 'Developer' },
-    { id: 'analysis', label: 'Code Analysis' },
+    { id: 'quality', label: 'Code Analysis' },
+    { id: 'design', label: 'Design Guide' },
+    { id: 'analysis', label: 'Code Docs' },
     { id: 'docs', label: 'Reference Docs' }
   ];
 
@@ -88,6 +92,9 @@
 
   // Repository source & multi-agent model state
   let activeSource = $state('');
+  /** @type {'local' | 'github'} */
+  let activeSourceType = $state('local');
+  let activeCatalogId = $state('');
   let activeRepoName = $state('No repository loaded');
   let analyzingSource = $state(false);
   let sourceError = $state(null);
@@ -547,6 +554,8 @@
       try {
         const saved = await findCatalogEntryBySource(cleaned, type);
         if (saved?.id) {
+          activeCatalogId = saved.id;
+          activeSourceType = type;
           rememberActiveStudio({
             entryId: saved.id,
             source: cleaned,
@@ -601,6 +610,7 @@
     customHierarchy = payload.hierarchy;
     agentReports = payload.agents ?? [];
     activeSource = payload.source;
+    activeSourceType = payload.source_type === 'github' ? 'github' : 'local';
     activeRepoName = `${payload.repo_name} (${payload.source_type})`;
     sourceRevision += 1;
     focusedParentNode = null;
@@ -624,10 +634,15 @@
     sourceError = null;
     applyAnalyzedModel(payload);
     if (result?.entry?.id) {
+      activeCatalogId = result.entry.id;
+      activeSourceType =
+        result.entry.source_type === 'github' || payload.source_type === 'github'
+          ? 'github'
+          : 'local';
       rememberActiveStudio({
         entryId: result.entry.id,
         source: payload.source,
-        sourceType: payload.source_type,
+        sourceType: activeSourceType,
         repoName: payload.repo_name
       });
     }
@@ -645,6 +660,8 @@
     customHierarchy = null;
     agentReports = [];
     activeSource = '';
+    activeSourceType = 'local';
+    activeCatalogId = '';
     activeRepoName = 'No repository loaded';
     sourceRevision += 1;
     focusedParentNode = null;
@@ -1033,6 +1050,22 @@
           selectedNode = null;
         }}
       />
+    {/if}
+  </div>
+
+  <div class="app-panel" role="tabpanel" id="panel-quality" aria-labelledby="tab-quality" hidden={tab !== 'quality'}>
+    {#if tab === 'quality'}
+      <CodeQualityDashboard
+        {activeSource}
+        sourceType={activeSourceType}
+        catalogId={activeCatalogId}
+      />
+    {/if}
+  </div>
+
+  <div class="app-panel" role="tabpanel" id="panel-design" aria-labelledby="tab-design" hidden={tab !== 'design'}>
+    {#if tab === 'design'}
+      <DesignGuideView />
     {/if}
   </div>
 

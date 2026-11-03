@@ -105,6 +105,25 @@ class CatalogStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quality_reports (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    model TEXT,
+                    ran_at TEXT NOT NULL,
+                    report_json TEXT NOT NULL,
+                    last_updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_quality_source
+                ON quality_reports(source_type, source)
+                """
+            )
             conn.commit()
 
     def _row_to_entry(self, row: sqlite3.Row) -> CatalogEntry:
@@ -328,15 +347,119 @@ class CatalogStore:
         )
         return entry, payload
 
+    def upsert_quality_report(
+        self,
+        source: str,
+        source_type: str,
+        report: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Cache a Code Analysis report for a repo; a new run replaces the previous one."""
+        clean_source = str(source or "").strip()
+        clean_type = str(source_type or "local").strip().lower()
+        if clean_type not in ("local", "github"):
+            clean_type = "local"
+        if not clean_source:
+            raise ValueError("source is required to cache a quality report")
+
+        entry_id = make_catalog_id(clean_source, clean_type)
+        stamp = _now_iso()
+        ran_at = str(report.get("ran_at") or stamp)
+        model = report.get("model")
+        report_json = json.dumps(report, ensure_ascii=False)
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO quality_reports (
+                    id, source, source_type, model, ran_at, report_json, last_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source = excluded.source,
+                    source_type = excluded.source_type,
+                    model = excluded.model,
+                    ran_at = excluded.ran_at,
+                    report_json = excluded.report_json,
+                    last_updated_at = excluded.last_updated_at
+                """,
+                (
+                    entry_id,
+                    clean_source,
+                    clean_type,
+                    str(model) if model is not None else None,
+                    ran_at,
+                    report_json,
+                    stamp,
+                ),
+            )
+            conn.commit()
+
+        return {
+            "id": entry_id,
+            "source": clean_source,
+            "source_type": clean_type,
+            "model": model,
+            "ran_at": ran_at,
+            "last_updated_at": stamp,
+            "cached": True,
+        }
+
+    def get_quality_report(
+        self,
+        *,
+        entry_id: str | None = None,
+        source: str | None = None,
+        source_type: str = "local",
+    ) -> dict[str, Any] | None:
+        """Return the latest cached Code Analysis report for a catalog repo, if any."""
+        resolved_id = (entry_id or "").strip()
+        if not resolved_id:
+            clean_source = str(source or "").strip()
+            clean_type = str(source_type or "local").strip().lower()
+            if clean_type not in ("local", "github"):
+                clean_type = "local"
+            if not clean_source:
+                return None
+            resolved_id = make_catalog_id(clean_source, clean_type)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, source, source_type, model, ran_at, report_json, last_updated_at
+                FROM quality_reports
+                WHERE id = ?
+                """,
+                (resolved_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            report = json.loads(row["report_json"])
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(report, dict):
+            return None
+        return {
+            "id": row["id"],
+            "source": row["source"],
+            "source_type": row["source_type"],
+            "model": row["model"],
+            "ran_at": row["ran_at"],
+            "last_updated_at": row["last_updated_at"],
+            "cached": True,
+            "report": report,
+        }
+
     def delete_entry(self, entry_id: str) -> bool:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM analyzed_repos WHERE id = ?", (entry_id,))
+            conn.execute("DELETE FROM quality_reports WHERE id = ?", (entry_id,))
             conn.commit()
             return cur.rowcount > 0
 
     def clear(self) -> int:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM analyzed_repos")
+            conn.execute("DELETE FROM quality_reports")
             conn.commit()
             return cur.rowcount
 

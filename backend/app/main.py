@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError
 from pydantic import BaseModel, Field
@@ -95,6 +95,25 @@ class CodeAnalysisRequest(BaseModel):
     source: str = Field(
         default="..",
         description="Local repository path to inspect with the 17 adapted Coding & UI/UX Agent Skills.",
+    )
+
+
+class CodeQualityRequest(BaseModel):
+    source: str = Field(
+        default="..",
+        description="Local repository path for Sonar-like quality, security, memory, and endpoint scans.",
+    )
+    source_type: str = Field(
+        default="local",
+        description="Catalog identity: local | github — same keying as cached C4 diagrams.",
+    )
+    model: str | None = Field(
+        default="fable-5.1",
+        description="Preferred high-reasoning LLMHub model id (e.g. fable-5.1, o3-mini).",
+    )
+    catalog_id: str | None = Field(
+        default=None,
+        description="Optional Architect Catalog entry id; preferred cache key when set.",
     )
 
 
@@ -201,6 +220,8 @@ def root() -> dict:
             "/api/agents",
             "/api/skills",
             "/api/analysis/run",
+            "/api/analysis/quality",
+            "/api/design-guide",
             "/api/sandbox/run",
             "/api/explain/component",
             "/api/docs/generate",
@@ -284,6 +305,122 @@ def run_code_and_ux_analysis(request: CodeAnalysisRequest) -> dict:
         return skill_run_code_and_ux_analysis(request.source)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/analysis/quality")
+def get_cached_code_quality(
+    source: str | None = None,
+    source_type: str = "local",
+    catalog_id: str | None = None,
+) -> dict:
+    """Return the latest Code Analysis report cached for a catalog repo (with its diagrams)."""
+    cached = catalog_store.get_quality_report(
+        entry_id=catalog_id,
+        source=source,
+        source_type=source_type,
+    )
+    if not cached:
+        return {"cached": False, "report": None}
+    return cached
+
+
+@app.post("/api/analysis/quality")
+def run_code_quality_dashboard(request: CodeQualityRequest) -> dict:
+    """Code Analysis tab: agentic LLMHub scan (factor sub-agents + supervisor).
+
+    Persists the report in the Architect Catalog DB keyed like C4 diagrams;
+    a new run overrides the previous report for that repo.
+    """
+    from app.code_analysis_agent import run_code_analysis_agents
+    from app.design_guide_store import guide_for_analysis
+
+    try:
+        report = run_code_analysis_agents(
+            request.source,
+            model=request.model,
+            design_guide=guide_for_analysis(),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    cache_source = str(request.source or "").strip() or str(report.get("source") or "").strip()
+    cache_type = str(request.source_type or "local").strip().lower()
+    if cache_type not in ("local", "github"):
+        cache_type = "local"
+
+    # Prefer explicit catalog id when the studio has an open project.
+    entry_id = (request.catalog_id or "").strip()
+    if entry_id:
+        entry = catalog_store.get_entry(entry_id)
+        if entry:
+            cache_source = entry.source
+            cache_type = entry.source_type
+
+    if cache_source:
+        try:
+            meta = catalog_store.upsert_quality_report(cache_source, cache_type, report)
+            report = {
+                **report,
+                "cached": True,
+                "catalog_id": meta["id"],
+                "cache_updated_at": meta["last_updated_at"],
+            }
+        except ValueError:
+            report = {**report, "cached": False}
+    else:
+        report = {**report, "cached": False}
+
+    return report
+
+
+@app.get("/api/design-guide")
+def get_design_guide() -> dict:
+    from app.design_guide_store import get_active_guide
+
+    guide = get_active_guide()
+    if not guide:
+        return {"active": False, "guide": None}
+    return {
+        "active": True,
+        "guide": {
+            "filename": guide.get("filename"),
+            "bytes": guide.get("bytes"),
+            "uploaded_at": guide.get("uploaded_at"),
+            "citations": guide.get("citations") or [],
+            "excerpt_preview": (guide.get("excerpt") or "")[:400],
+        },
+    }
+
+
+@app.post("/api/design-guide")
+async def upload_design_guide(file: UploadFile = File(...)) -> dict:
+    from app.design_guide_store import save_guide
+
+    raw = await file.read()
+    try:
+        meta = save_guide(file.filename or "design-guide.txt", raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "active": True,
+        "guide": {
+            "filename": meta.get("filename"),
+            "bytes": meta.get("bytes"),
+            "uploaded_at": meta.get("uploaded_at"),
+            "citations": meta.get("citations") or [],
+            "excerpt_preview": (meta.get("excerpt") or "")[:400],
+        },
+    }
+
+
+@app.delete("/api/design-guide")
+def delete_design_guide() -> dict:
+    from app.design_guide_store import clear_guide
+
+    clear_guide()
+    return {"active": False, "guide": None}
 
 
 @app.post("/api/sandbox/run")
@@ -393,37 +530,34 @@ def explain_component(request: ExplainComponentRequest) -> dict:
 
     model = _resolve_explain_model(request.model, prefer_powerful=(mode == "deep"))
 
+    from app.prompt.explain import (
+        EXPLAIN_COMPACT_SYSTEM,
+        EXPLAIN_DEEP_SYSTEM,
+        build_explain_user_prompt,
+    )
+
     if mode == "deep":
-        system = (
-            "You are a principal software architect explaining a C4 model component in depth. "
-            "Use the full architecture context. Cover: role, responsibilities, collaborators, "
-            "data/control flow, and why it exists. "
-            "Format with short paragraphs separated by blank lines. "
-            "You may use **bold** for component names. No bullet lists unless essential. Avoid fluff."
-        )
+        system = EXPLAIN_DEEP_SYSTEM
         context_block = _summarize_layers_context(request.layers_context, name)
-        user = (
-            f"Deep-explain this C4 component using the architecture context.\n"
-            f"Name: {name}\n"
-            f"Kind: {request.kind or 'unknown'}\n"
-            f"Layer: {request.layer or 'unknown'}\n"
-            f"Technology: {request.technology or 'n/a'}\n"
-            f"Description: {request.description or 'n/a'}\n\n"
-            f"Architecture context:\n{context_block}\n"
+        user = build_explain_user_prompt(
+            mode="deep",
+            name=name,
+            kind=request.kind or "",
+            layer=request.layer or "",
+            technology=request.technology or "",
+            description=request.description or "",
+            architecture_context=context_block,
         )
         max_words = 320
     else:
-        system = (
-            "You explain software architecture components for busy engineers. "
-            "Reply in plain English only. Maximum 50 words. No bullets, no markdown."
-        )
-        user = (
-            f"Explain this C4 component briefly.\n"
-            f"Name: {name}\n"
-            f"Kind: {request.kind or 'unknown'}\n"
-            f"Layer: {request.layer or 'unknown'}\n"
-            f"Technology: {request.technology or 'n/a'}\n"
-            f"Description: {request.description or 'n/a'}\n"
+        system = EXPLAIN_COMPACT_SYSTEM
+        user = build_explain_user_prompt(
+            mode="compact",
+            name=name,
+            kind=request.kind or "",
+            layer=request.layer or "",
+            technology=request.technology or "",
+            description=request.description or "",
         )
         max_words = 50
 
