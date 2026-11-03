@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **C4 Modelling** platform implements five deterministic and LLM-assisted evaluation metrics across `app/schemas.py`, `app/c4_service.py`, `app/agents.py`, and `app/skills_registry.py` to guarantee that every generated C4 diagram is structurally valid, bounded in cognitive load, and hierarchically traceable from **Context** down to **Code**.
+The **Orthos** platform implements five deterministic and LLM-assisted evaluation metrics across `app/schemas.py`, `app/c4_service.py`, `app/agents.py`, and `app/skills_registry.py` to guarantee that every generated C4 diagram is structurally valid, bounded in cognitive load, and hierarchically traceable from **Context** down to **Code**.
 
 ![Evaluation Metrics Diagram](images/png/06_evaluation_metrics_diagram.png)
 

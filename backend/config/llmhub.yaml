@@ -16,9 +16,18 @@ llmhub:
 
   # Model tiers (OpenAI-compatible chat model IDs available on your key).
   # Call GET /v1/models if a request returns "No provider found for model".
+  # Override via .env: LLMHUB_MODEL_POWERFUL / LLMHUB_MODEL_MEDIUM / LLMHUB_MODEL_OPTIONS
   models:
     powerful: gpt-4o          # Manager + Supervisor (orchestration / planning)
     medium: gpt-4.1-mini      # Specialist layer agents (Context → Code)
+    # Shown in the UI model dropdown (comma list also via LLMHUB_MODEL_OPTIONS).
+    options:
+      - gpt-4o
+      - gpt-4.1
+      - gpt-4.1-mini
+      - gpt-4o-mini
+      - o3-mini
+      - o4-mini
 
   # Per-agent adapter bindings. Each agent gets its own LLMHubAdapter instance.
   agents:

@@ -165,6 +165,14 @@ class ModelSourceRequest(BaseModel):
         default=None,
         description="Optional LLMHub model override when use_llm is enabled (specialists default to medium tier).",
     )
+    job_id: str | None = Field(
+        default=None,
+        description="Client-generated id so the UI can stop this run via POST /api/c4/cancel.",
+    )
+
+
+class CancelRequest(BaseModel):
+    job_id: str = Field(description="The job_id previously sent with POST /api/c4/model.")
 
 
 class AgentReport(BaseModel):
@@ -188,6 +196,40 @@ class HierarchyTreeNode(BaseModel):
     children: list[HierarchyTreeNode] = Field(default_factory=list)
 
 
+FolderRole = Literal["container", "component", "shared", "ignore"]
+ProjectStyle = Literal["feature_modules", "service_monorepo", "single_app", "mixed"]
+
+
+class FolderClassificationModel(BaseModel):
+    """API view of one classified folder (and optional child folders)."""
+
+    path: str
+    name: str
+    depth: int = 0
+    role: FolderRole
+    confidence: float = 0.0
+    evidence: list[str] = Field(default_factory=list)
+    scores: dict[str, float] = Field(default_factory=dict)
+    file_count: int = 0
+    code_file_count: int = 0
+    extensions: list[str] = Field(default_factory=list)
+    children: list[FolderClassificationModel] = Field(default_factory=list)
+    refined_by_llm: bool = False
+
+
+class ProjectPlanModel(BaseModel):
+    """Manager-produced folder role plan for the analyzed repository."""
+
+    root: str
+    repo_name: str
+    style: ProjectStyle
+    summary: str
+    folders: list[FolderClassificationModel] = Field(default_factory=list)
+    container_scopes: list[str] = Field(default_factory=list)
+    component_scopes: list[str] = Field(default_factory=list)
+    shared_scopes: list[str] = Field(default_factory=list)
+
+
 class HierarchyModelResponse(BaseModel):
     source: str
     source_type: Literal["local", "github"]
@@ -195,4 +237,8 @@ class HierarchyModelResponse(BaseModel):
     agents: list[AgentReport]
     layers: dict[Layer, LayerResponse]
     hierarchy: list[HierarchyTreeNode]
+    project_plan: ProjectPlanModel | None = Field(
+        default=None,
+        description="Folder/subfolder role classification (container/component/shared/ignore).",
+    )
 

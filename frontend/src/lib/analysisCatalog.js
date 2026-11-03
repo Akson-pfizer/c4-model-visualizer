@@ -20,6 +20,10 @@
 export function formatFriendlyError(err, contextLabel = 'Code Analysis') {
   console.warn(`[${contextLabel}] Technical error detail:`, err);
   const raw = err instanceof Error ? err.message : String(err ?? '');
+  const name = err instanceof Error ? err.name : '';
+  if (name === 'AbortError' || raw.includes('Analysis cancelled') || raw.includes('The user aborted')) {
+    return `${contextLabel} stopped.`;
+  }
   if (raw.includes('<!doctype') || raw.includes('Unexpected token')) {
     return `${contextLabel} service returned an HTML page instead of JSON. Verify the FastAPI backend is running on port 8000 and click "Run Live Audit" to retry.`;
   }

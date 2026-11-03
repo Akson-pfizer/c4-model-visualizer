@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     SvelteFlow,
     SvelteFlowProvider,
@@ -14,6 +14,7 @@
   import C4Node from './nodes/C4Node.svelte';
   import C4Edge from './edges/C4Edge.svelte';
   import Legend from './Legend.svelte';
+  import FullscreenToggle from './FullscreenToggle.svelte';
   import { LAYER_ORDER } from '../diagramData.js';
 
   let {
@@ -36,14 +37,14 @@
 
   const LAYER_Y = {
     context: 40,
-    container: 280,
-    component: 520,
-    code: 760
+    container: 320,
+    component: 600,
+    code: 880
   };
 
-  const NODE_WIDTH = 220;
-  const NODE_HEIGHT = 150;
-  const X_GAP = 255;
+  const NODE_WIDTH = 200;
+  const NODE_HEIGHT = 118;
+  const X_GAP = 360;
 
   function buildTreeFlow(roots) {
     /** @type {any[]} */
@@ -147,14 +148,10 @@
     return { flowNodes, flowEdges };
   }
 
-  let built = $derived(buildTreeFlow(hierarchy));
-  let nodes = $state.raw([]);
-  let edges = $state.raw([]);
-
-  $effect(() => {
-    nodes = built.flowNodes;
-    edges = built.flowEdges;
-  });
+  // Parent remounts this canvas via {#key}, so init once — avoid $effect fighting SvelteFlow binds.
+  const initial = untrack(() => buildTreeFlow(hierarchy));
+  let nodes = $state.raw(initial.flowNodes);
+  let edges = $state.raw(initial.flowEdges);
 
   const legend = [
     { kind: 'system', label: '1 · Context (Root)' },
@@ -180,6 +177,8 @@
     onNodeSelect?.(null);
   }
 
+  let shellEl = $state(/** @type {HTMLDivElement | null} */ (null));
+
   onMount(() => {
     requestAnimationFrame(() => {
       onReady?.(loadGeneration);
@@ -187,7 +186,7 @@
   });
 </script>
 
-<div class="tree-canvas" aria-label="C4 hierarchy tree view">
+<div class="tree-canvas" bind:this={shellEl} aria-label="C4 hierarchy tree view">
   <SvelteFlowProvider>
     <SvelteFlow
       bind:nodes
@@ -226,15 +225,32 @@
       </Panel>
     </SvelteFlow>
   </SvelteFlowProvider>
+  <div class="tree-canvas__fs">
+    <FullscreenToggle target={shellEl} />
+  </div>
 </div>
 
 <style>
   .tree-canvas {
+    position: relative;
     flex: 1;
     min-width: 0;
     min-height: 0;
     height: 100%;
     background: var(--canvas-bg);
+  }
+
+  .tree-canvas:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    background: var(--canvas-bg, #f4f7fb);
+  }
+
+  .tree-canvas__fs {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 6;
   }
 
   .tree-banner {

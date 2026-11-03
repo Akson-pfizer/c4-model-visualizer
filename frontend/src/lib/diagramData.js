@@ -1,18 +1,43 @@
-// Adapts backend-shaped C4 layer payloads (either the default static demo JSON
-// or the live multi-agent backend response from POST /api/c4/model) into Svelte
-// Flow's node/edge shape, and builds the hierarchical tree model across
-// Context -> Container -> Component -> Code.
+// Adapts backend-shaped C4 layer payloads (live multi-agent response from
+// POST /api/c4/model, or an empty workspace) into Svelte Flow's node/edge shape,
+// and builds the hierarchical tree model across Context -> Container -> Component -> Code.
 import contextData from './data/context.json';
 import containerData from './data/container.json';
 import componentData from './data/component.json';
 import codeData from './data/code.json';
 
-export const DEFAULT_RAW_BY_LAYER = {
+/** Optional sample Internet Banking dataset (not loaded by default). */
+export const DEMO_RAW_BY_LAYER = {
   context: contextData,
   container: containerData,
   component: componentData,
   code: codeData
 };
+
+function emptyLayer(layerId, title) {
+  return {
+    layer: layerId,
+    title,
+    subtitle: '',
+    description: 'Analyze a repository to populate this C4 layer.',
+    note: null,
+    legend: [],
+    boundaries: [],
+    nodes: [],
+    edges: []
+  };
+}
+
+/** Blank workspace shown until the user runs Analyze. */
+export const EMPTY_RAW_BY_LAYER = {
+  context: emptyLayer('context', 'Context'),
+  container: emptyLayer('container', 'Container'),
+  component: emptyLayer('component', 'Component'),
+  code: emptyLayer('code', 'Code')
+};
+
+/** @deprecated Prefer EMPTY_RAW_BY_LAYER; kept as alias for older imports. */
+export const DEFAULT_RAW_BY_LAYER = EMPTY_RAW_BY_LAYER;
 
 export const LAYERS = [
   { id: 'context', label: 'Context', description: 'System Context' },
@@ -130,8 +155,8 @@ export function adaptRawLayer(raw, focusParentId = null) {
   const allowedNodeIds = new Set(filteredRawNodes.map((n) => n.id));
   const elementNodes = filteredRawNodes.map((node) => ({
     ...node,
-    width: 220,
-    height: 150,
+    width: 200,
+    height: 118,
     zIndex: 1,
     data: {
       ...node.data,
@@ -158,8 +183,8 @@ export function adaptRawLayer(raw, focusParentId = null) {
   };
 }
 
-export function getLayer(layerId, rawByLayer = DEFAULT_RAW_BY_LAYER, focusParentId = null) {
-  const raw = rawByLayer[layerId] ?? DEFAULT_RAW_BY_LAYER[layerId];
+export function getLayer(layerId, rawByLayer = EMPTY_RAW_BY_LAYER, focusParentId = null) {
+  const raw = rawByLayer[layerId] ?? EMPTY_RAW_BY_LAYER[layerId];
   if (!raw) {
     throw new Error(`Unknown C4 layer: ${layerId}`);
   }
@@ -172,12 +197,12 @@ export function getLayer(layerId, rawByLayer = DEFAULT_RAW_BY_LAYER, focusParent
  * Each layer's nodes attach to their parent in the layer above via `data.parentNodeId`
  * (with automatic fallback to the primary in-scope parent if not explicitly set).
  */
-export function buildHierarchyFromLayers(rawByLayer = DEFAULT_RAW_BY_LAYER) {
+export function buildHierarchyFromLayers(rawByLayer = EMPTY_RAW_BY_LAYER) {
   /** @type {Record<string, Map<string, any>>} */
   const byLayer = {};
 
   for (const layerId of LAYER_ORDER) {
-    const raw = rawByLayer[layerId] ?? DEFAULT_RAW_BY_LAYER[layerId];
+    const raw = rawByLayer[layerId] ?? EMPTY_RAW_BY_LAYER[layerId];
     const map = new Map();
     for (const node of raw?.nodes ?? []) {
       if (node.type && node.type !== 'c4Node') continue;

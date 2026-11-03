@@ -15,6 +15,11 @@
   import C4Boundary from './nodes/C4Boundary.svelte';
   import C4Edge from './edges/C4Edge.svelte';
   import Legend from './Legend.svelte';
+  import {
+    alignEdgesToVisibility,
+    alignNodesInBoundaries,
+    applyKindVisibility
+  } from '../layoutAlign.js';
 
   let { layer, onNodeSelect, onNodeDoubleClick, onBoundaryClick, loadGeneration, onReady } =
     $props();
@@ -47,24 +52,74 @@
     });
   }
 
-  // App.svelte remounts this component fresh per layer (via {#key}), so `layer`
-  // is only ever read once per instance — untrack() makes that explicit.
-  let nodes = $state.raw(untrack(() => attachNodeDrillHandlers(layer.nodes)));
-  let edges = $state.raw(untrack(() => layer.edges));
+  const legendKinds = untrack(
+    () => new Set((layer.legend || []).map((item) => item.kind).filter(Boolean))
+  );
+  const interactiveLegend = legendKinds.size > 0;
+  // Only re-pack nested code/component cards — Context/Container keep authored layout.
+  const packOnFilter = untrack(
+    () => layer.layer === 'code' || layer.layer === 'component'
+  );
+  // MiniMap redraws on every pan frame — skip it on dense diagrams.
+  const showMiniMap = untrack(() => {
+    const count = (layer.elementNodes || layer.nodes || []).filter(
+      (n) => n.type === 'c4Node' || !n.type
+    ).length;
+    return count > 0 && count <= 14;
+  });
+
+  let activeKinds = $state.raw(untrack(() => new Set(legendKinds)));
+
+  const seedNodes = untrack(() => attachNodeDrillHandlers(layer.nodes));
+  const seedEdges = untrack(() => layer.edges);
+
+  function buildVisible(kinds) {
+    const opts = {
+      enabledKinds: interactiveLegend ? kinds : null,
+      legendKinds: interactiveLegend ? legendKinds : null,
+      cols: 2
+    };
+    const aligned = packOnFilter
+      ? alignNodesInBoundaries(seedNodes, opts)
+      : applyKindVisibility(seedNodes, opts);
+    const nextEdges = alignEdgesToVisibility(seedEdges, aligned);
+    return { aligned, nextEdges };
+  }
+
+  const initial = untrack(() => buildVisible(activeKinds));
+  let nodes = $state.raw(initial.aligned);
+  let edges = $state.raw(initial.nextEdges);
+
+  function applyKindFilter(kinds) {
+    activeKinds = new Set(kinds);
+    const { aligned, nextEdges } = buildVisible(activeKinds);
+    nodes = aligned;
+    edges = nextEdges;
+  }
+
+  function handleLegendToggle(kind) {
+    if (!legendKinds.has(kind)) return;
+    const next = new Set(activeKinds);
+    if (next.has(kind)) {
+      if (next.size <= 1) return;
+      next.delete(kind);
+    } else {
+      next.add(kind);
+    }
+    applyKindFilter(next);
+  }
 
   const { fitView } = useSvelteFlow();
 
-  // fitView on mount races the flex/fade layout settling on its final size,
-  // which can freeze the viewport at a stale (smaller) zoom. Re-run it one
-  // frame after init, once the container has its real dimensions.
   function handleInit() {
     requestAnimationFrame(() => {
-      fitView({ padding: 0.16, duration: 200 });
+      fitView({ padding: 0.16, duration: 0 });
       onReady?.(loadGeneration);
     });
   }
 
   function handleNodeClick({ node }) {
+    if (node?.hidden) return;
     if (node.type === 'c4Node') {
       onNodeSelect?.(node);
     } else if (node.type === 'c4Boundary' && node.data?.targetUpperLayer) {
@@ -73,6 +128,7 @@
   }
 
   function handleNodeDoubleClick({ node }) {
+    if (node?.hidden) return;
     if (node.type === 'c4Node') onNodeDoubleClick?.(node);
   }
 
@@ -88,7 +144,7 @@
   {edgeTypes}
   {defaultEdgeOptions}
   fitView
-  fitViewOptions={{ padding: 0.16 }}
+  fitViewOptions={{ padding: 0.16, duration: 0 }}
   minZoom={0.12}
   maxZoom={1.6}
   zoomOnDoubleClick={false}
@@ -98,18 +154,25 @@
   onnodedoubleclick={handleNodeDoubleClick}
   onpaneclick={handlePaneClick}
 >
-  <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />
+  <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="#d7e3f1" />
   <Controls showInteractive={false} />
-  <MiniMap
-    position="top-right"
-    width={130}
-    height={90}
-    pannable
-    zoomable
-    nodeColor={() => '#bcd0e8'}
-    maskColor="rgba(29,78,216,0.06)"
-  />
+  {#if showMiniMap}
+    <MiniMap
+      position="top-right"
+      width={110}
+      height={72}
+      pannable={false}
+      zoomable={false}
+      nodeColor={() => '#bcd0e8'}
+      maskColor="rgba(29,78,216,0.06)"
+    />
+  {/if}
   <Panel position="top-left">
-    <Legend legend={layer.legend} />
+    <Legend
+      legend={layer.legend}
+      activeKinds={activeKinds}
+      interactive={interactiveLegend}
+      onToggle={handleLegendToggle}
+    />
   </Panel>
 </SvelteFlow>

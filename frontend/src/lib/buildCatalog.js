@@ -91,8 +91,8 @@ function countWord(count, singular, plural = `${singular}s`) {
 
 function insideBoundary(node, boundary) {
   if (node.parentId === boundary.id) return true;
-  const nw = node.width ?? 220;
-  const nh = node.height ?? 150;
+  const nw = node.width ?? 200;
+  const nh = node.height ?? 118;
   const cx = node.position.x + nw / 2;
   const cy = node.position.y + nh / 2;
   const bx = boundary.position.x;

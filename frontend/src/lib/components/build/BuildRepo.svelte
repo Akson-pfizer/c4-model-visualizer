@@ -5,13 +5,14 @@
   import '@xyflow/svelte/dist/style.css';
   import { ARROWS, SHAPES, buildArchitecturePlan } from '../../buildCatalog.js';
   import {
-    DEFAULT_RAW_BY_LAYER,
+    EMPTY_RAW_BY_LAYER,
     LAYERS,
     buildHierarchyFromLayers,
     getLayer,
     getNextLayerId,
     getPrevLayerId
   } from '../../diagramData.js';
+  import { plainClone } from '../../plainClone.js';
   import LayerSelect from '../LayerSelect.svelte';
   import HierarchyTreeCanvas from '../HierarchyTreeCanvas.svelte';
   import PfizerLoader from '../PfizerLoader.svelte';
@@ -25,36 +26,33 @@
   let {
     active = true,
     layerId = 'context',
-    rawByLayer = DEFAULT_RAW_BY_LAYER,
+    rawByLayer = EMPTY_RAW_BY_LAYER,
     hierarchy = [],
     sourceRevision = 0,
     onLayerChange
   } = $props();
 
-  function createInitialDiagrams(sourceMap = DEFAULT_RAW_BY_LAYER) {
+  function createInitialDiagrams(sourceMap = EMPTY_RAW_BY_LAYER) {
     /** @type {Record<string, { nodes: any[], edges: any[] }>} */
     const map = {};
     for (const item of LAYERS) {
       const layerData = getLayer(item.id, sourceMap);
-      map[item.id] = {
-        nodes: structuredClone(layerData.nodes).map((n) =>
-          n.type === 'c4Boundary' ? { ...n, selectable: true, draggable: true } : n
-        ),
-        edges: structuredClone(layerData.edges)
-      };
+      // plainClone avoids structuredClone failures on Svelte reactive Proxies.
+      const nodes = plainClone(layerData.nodes).map((n) =>
+        n.type === 'c4Boundary' ? { ...n, selectable: true, draggable: true } : n
+      );
+      const edges = plainClone(layerData.edges);
+      map[item.id] = { nodes, edges };
     }
     return map;
   }
 
-  const diagramsByLayer = createInitialDiagrams();
+  let diagramsByLayer = $state.raw(createInitialDiagrams());
   let lastRevision = -1;
   $effect(() => {
     if (sourceRevision !== lastRevision) {
       lastRevision = sourceRevision;
-      const fresh = createInitialDiagrams(rawByLayer);
-      for (const key of Object.keys(fresh)) {
-        diagramsByLayer[key] = fresh[key];
-      }
+      diagramsByLayer = createInitialDiagrams(rawByLayer);
     }
   });
 
@@ -74,9 +72,12 @@
   let historyState = $state({ canUndo: false, canRedo: false, hasClipboard: false });
 
   let layer = $derived(getLayer(buildLayerId, rawByLayer));
-  let activeHierarchy = $derived(
-    hierarchy && hierarchy.length > 0 ? hierarchy : buildHierarchyFromLayers(rawByLayer)
-  );
+  // Build hierarchy only when Tree view is active — avoid scanning all layers while editing.
+  let activeHierarchy = $derived.by(() => {
+    if (viewMode !== 'tree') return hierarchy ?? [];
+    if (hierarchy && hierarchy.length > 0) return hierarchy;
+    return buildHierarchyFromLayers(rawByLayer);
+  });
 
   /** @type {ReturnType<typeof setInterval> | undefined} */
   let countdown;
@@ -139,11 +140,12 @@
   }
 
   function handleDiagramChange(layerIdVal, nodes, edges) {
-    diagramsByLayer[layerIdVal] = { nodes, edges };
-    if (planOpen && layerIdVal === buildLayerId) {
-      plan = buildArchitecturePlan(nodes, edges, layer.title);
-      planApproved = false;
-    }
+    // Reassign map so $state.raw consumers see a new reference when needed.
+    diagramsByLayer = {
+      ...diagramsByLayer,
+      [layerIdVal]: { nodes, edges }
+    };
+    // Skip plan rebuild during drag/edit churn — user can hit Plan again.
   }
 
   function generatePlan() {
@@ -247,28 +249,35 @@
   });
 </script>
 
-<div class="build">
+<div class="build" class:build--inactive={!active}>
   <BuildPalette
     shapes={SHAPES}
     arrows={ARROWS}
     {activeArrowId}
     {collapsed}
     onToggleCollapse={() => (collapsed = !collapsed)}
-    {onDragStart}
-    onAdd={addToCanvas}
+    onDragStart={active ? onDragStart : undefined}
+    onAdd={active ? addToCanvas : undefined}
   />
 
-  <section class="work-area" aria-label="Architecture work area" aria-busy={loading}>
+  <section
+    class="work-area"
+    class:work-area--inactive={!active}
+    aria-label="Architecture work area"
+    aria-busy={loading}
+  >
     <header class="work-area__bar">
       <p class="work-area__hint">
-        {#if viewMode === 'tree'}
+        {#if !active}
+          <strong>Developer idle</strong> · Analyze a repository to unlock the build canvas
+        {:else if viewMode === 'tree'}
           <strong>Hierarchy Tree View</strong> · Context → Container → Component → Code Class Modules
         {:else}
           <strong>{layer.title} layer</strong> · {layer.subtitle}
         {/if}
       </p>
       <div class="work-area__actions">
-        {#if viewMode === 'layer'}
+        {#if active && viewMode === 'layer'}
           <div class="shortcut-strip" role="group" aria-label="Canvas history and clipboard actions">
             <button
               type="button"
@@ -316,6 +325,7 @@
             class="view-toggle__btn"
             class:active={viewMode === 'layer'}
             aria-pressed={viewMode === 'layer'}
+            disabled={!active}
             onclick={() => handleViewModeChange('layer')}
           >
             Layer
@@ -325,6 +335,7 @@
             class="view-toggle__btn"
             class:active={viewMode === 'tree'}
             aria-pressed={viewMode === 'tree'}
+            disabled={!active}
             onclick={() => handleViewModeChange('tree')}
           >
             Tree
@@ -333,48 +344,58 @@
         <LayerSelect
           idPrefix="build-layer"
           value={buildLayerId}
-          disabled={viewMode === 'tree'}
+          disabled={!active || viewMode === 'tree'}
           onChange={handleLayerChange}
         />
-        <button type="button" class="plan-button" onclick={generatePlan}>
+        <button type="button" class="plan-button" disabled={!active} onclick={generatePlan}>
           Plan
         </button>
       </div>
     </header>
     <div class="work-area__canvas">
-      {#key `${buildLayerId}-${viewMode}-${sourceRevision}-${active}`}
-        {#if viewMode === 'tree'}
-          <HierarchyTreeCanvas
-            hierarchy={activeHierarchy}
-            {loadGeneration}
-            onNodeDoubleClick={handleNodeDoubleClick}
-            onReady={handleCanvasReady}
-          />
-        {:else}
-          <SvelteFlowProvider>
-            <BuildCanvas
-              bind:this={canvasRef}
-              {activeArrowId}
-              initialNodes={diagramsByLayer[buildLayerId].nodes}
-              initialEdges={diagramsByLayer[buildLayerId].edges}
-              legend={layer.legend}
+      {#if active}
+        {#key `${buildLayerId}-${viewMode}-${sourceRevision}-${active}`}
+          {#if viewMode === 'tree'}
+            <HierarchyTreeCanvas
+              hierarchy={activeHierarchy}
               {loadGeneration}
-              onChange={(nodes, edges) => handleDiagramChange(buildLayerId, nodes, edges)}
-              onHistoryStateChange={(state) => (historyState = state)}
               onNodeDoubleClick={handleNodeDoubleClick}
-              onBoundaryClick={handleBoundaryClick}
               onReady={handleCanvasReady}
             />
-          </SvelteFlowProvider>
+          {:else}
+            <SvelteFlowProvider>
+              <BuildCanvas
+                bind:this={canvasRef}
+                {activeArrowId}
+                initialNodes={diagramsByLayer[buildLayerId].nodes}
+                initialEdges={diagramsByLayer[buildLayerId].edges}
+                legend={layer.legend}
+                {loadGeneration}
+                onChange={(nodes, edges) => handleDiagramChange(buildLayerId, nodes, edges)}
+                onHistoryStateChange={(state) => (historyState = state)}
+                onNodeDoubleClick={handleNodeDoubleClick}
+                onBoundaryClick={handleBoundaryClick}
+                onReady={handleCanvasReady}
+              />
+            </SvelteFlowProvider>
+          {/if}
+        {/key}
+        {#if loading}
+          <div class="work-area__loader" out:fade={{ duration: 180 }}>
+            <PfizerLoader
+              label={viewMode === 'tree'
+                ? 'Loading C4 Hierarchy Tree'
+                : `Loading ${layer.title} diagram`}
+            />
+          </div>
         {/if}
-      {/key}
-      {#if loading}
-        <div class="work-area__loader" out:fade={{ duration: 180 }}>
-          <PfizerLoader
-            label={viewMode === 'tree'
-              ? 'Loading C4 Hierarchy Tree'
-              : `Loading ${layer.title} diagram`}
-          />
+      {:else}
+        <div class="canvas-idle" role="status">
+          <p class="canvas-idle__eyebrow">Build canvas locked</p>
+          <h2 class="canvas-idle__title">Analyze a repository first</h2>
+          <p class="canvas-idle__body">
+            The Developer canvas stays inactive until analysis finishes. Then you can edit layers, plan, and refine the architecture.
+          </p>
         </div>
       {/if}
     </div>
@@ -407,6 +428,12 @@
     padding: 16px 24px 20px;
   }
 
+  .build--inactive :global(.palette) {
+    opacity: 0.45;
+    pointer-events: none;
+    filter: grayscale(0.35);
+  }
+
   .work-area {
     flex: 1;
     min-width: 0;
@@ -418,6 +445,10 @@
     border-radius: 14px;
     box-shadow: var(--shadow-sm);
     overflow: hidden;
+  }
+
+  .work-area--inactive {
+    background: color-mix(in srgb, var(--canvas-bg) 70%, #dbe4f0);
   }
 
   .work-area__bar {
@@ -519,8 +550,18 @@
     box-shadow: var(--shadow-sm);
   }
 
-  .plan-button:hover {
+  .plan-button:hover:not(:disabled) {
     background: var(--blue-900);
+  }
+
+  .plan-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .view-toggle__btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .work-area__canvas {
@@ -528,6 +569,51 @@
     flex: 1;
     min-height: 0;
     display: flex;
+  }
+
+  .canvas-idle {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 32px;
+    text-align: center;
+    color: var(--text-muted);
+    background:
+      radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--blue-100, #dbeafe) 55%, transparent), transparent 55%),
+      repeating-linear-gradient(
+        -12deg,
+        transparent,
+        transparent 11px,
+        color-mix(in srgb, var(--border) 55%, transparent) 11px,
+        color-mix(in srgb, var(--border) 55%, transparent) 12px
+      );
+  }
+
+  .canvas-idle__eyebrow {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .canvas-idle__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 750;
+    color: var(--text);
+  }
+
+  .canvas-idle__body {
+    margin: 0;
+    max-width: 420px;
+    font-size: 13.5px;
+    line-height: 1.45;
   }
 
   .work-area__loader {

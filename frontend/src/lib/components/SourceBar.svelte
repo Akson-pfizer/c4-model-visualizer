@@ -1,21 +1,29 @@
 <script>
   import { DEFAULT_AGENT_ROSTER, validateSource } from '../sourceValidation.js';
+  import { getCachedModels, loadLlmHubModels } from '../llmhubModels.js';
 
   let {
     source = '',
     analyzing = false,
     error = null,
-    activeRepoName = 'Internet Banking System (Demo)',
+    activeRepoName = 'No repository loaded',
     agents = [],
     onAnalyze,
+    onStop,
     onResetDemo
   } = $props();
 
-  let inputVal = $state('/Users/aksonsamvarghese/Work/claude_bootcamp');
+  const seed = getCachedModels();
+  let inputVal = $state('');
   /** @type {'local' | 'github'} */
   let sourceType = $state('local');
   let touched = $state(false);
   let showAgents = $state(false);
+  let useLlm = $state(false);
+  /** @type {string[]} */
+  let modelOptions = $state(seed?.options ?? []);
+  let selectedModel = $state(seed?.preferred ?? '');
+  let modelStatus = $state(seed?.status ?? 'Loading LLMHub models…');
 
   $effect(() => {
     if (source) {
@@ -23,20 +31,70 @@
     }
   });
 
+  $effect(() => {
+    let cancelled = false;
+    loadLlmHubModels().then((cached) => {
+      if (cancelled) return;
+      modelOptions = cached.options;
+      if (!selectedModel || !cached.options.includes(selectedModel)) {
+        selectedModel = cached.preferred;
+      }
+      modelStatus = cached.status;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   let validation = $derived(validateSource(inputVal, sourceType));
   let showValidationError = $derived((touched || inputVal.trim().length > 0) && !validation.valid);
   let displayAgents = $derived(agents.length > 0 ? agents : DEFAULT_AGENT_ROSTER);
+
+  /**
+   * Compact agent blurbs for the strip cards — full text stays on title hover.
+   * @param {string} raw
+   * @param {number} [maxLen]
+   */
+  function condenseSummary(raw, maxLen = 110) {
+    let text = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!text) return 'No summary.';
+
+    // Drop the long hierarchy sermon that often trails supervisor reports.
+    text = text
+      .replace(/\s*Yes—each node should have exactly one valid parent[\s\S]*$/i, '')
+      .replace(/\s*preserving a consistent Context→Container→Component→[\s\S]*$/i, '')
+      .trim();
+
+    const metrics = text.match(/(\d+)\s*nodes?.*?(\d+)\s*edges?/i);
+    const first = text.split(/(?<=[.!?])\s+/)[0] || text;
+    let base = first.length <= maxLen ? first : `${first.slice(0, maxLen - 1).trimEnd()}…`;
+    if (metrics && !/nodes?/i.test(base)) {
+      base = `${base.replace(/\.*$/, '')} · ${metrics[1]}n/${metrics[2]}e`;
+    }
+    return base;
+  }
+
+  /** @param {string} role */
+  function shortRole(role) {
+    const text = String(role || '').trim();
+    if (text.length <= 42) return text;
+    return `${text.slice(0, 40).trimEnd()}…`;
+  }
 
   function submit(event) {
     event.preventDefault();
     touched = true;
     if (!validation.valid || analyzing) return;
-    onAnalyze?.(inputVal.trim(), sourceType);
+    onAnalyze?.(inputVal.trim(), sourceType, {
+      use_llm: useLlm,
+      model: useLlm ? selectedModel || null : null
+    });
   }
 
   function handleReset() {
     touched = false;
     inputVal = '';
+    useLlm = false;
     onResetDemo?.();
   }
 </script>
@@ -92,23 +150,66 @@
       </div>
     </div>
 
-    <div class="source-section source-section--actions">
-      <span class="source-section__label">3 · Actions</span>
-      <div class="source-section__buttons">
-        <button
-          type="submit"
-          class="source-bar__submit"
-          disabled={analyzing || !validation.valid}
+    <div class="source-section source-section--llm">
+      <label class="source-section__label" for="repo-llm-model">
+        3 · LLMHub
+      </label>
+      <div class="source-section__llm-row">
+        <label class="source-section__toggle">
+          <input
+            type="checkbox"
+            bind:checked={useLlm}
+            disabled={analyzing || modelOptions.length === 0}
+          />
+          <span>Use LLM</span>
+        </label>
+        <select
+          id="repo-llm-model"
+          class="source-section__select"
+          bind:value={selectedModel}
+          disabled={analyzing || !useLlm || modelOptions.length === 0}
+          aria-label="LLMHub model"
         >
-          {analyzing ? 'Running Agents…' : 'Analyze'}
-        </button>
+          {#if modelOptions.length === 0}
+            <option value="">No models in .env</option>
+          {:else}
+            {#each modelOptions as mid (mid)}
+              <option value={mid}>{mid}</option>
+            {/each}
+          {/if}
+        </select>
+      </div>
+      <span class="source-section__hint">{modelStatus}</span>
+    </div>
+
+    <div class="source-section source-section--actions">
+      <span class="source-section__label">4 · Actions</span>
+      <div class="source-section__buttons">
+        {#if analyzing}
+          <button
+            type="button"
+            class="source-bar__stop"
+            onclick={() => onStop?.()}
+            aria-label="Stop analysis"
+          >
+            Stop
+          </button>
+        {:else}
+          <button
+            type="submit"
+            class="source-bar__submit"
+            disabled={!validation.valid}
+          >
+            Analyze
+          </button>
+        {/if}
         <button
           type="button"
           class="source-bar__reset"
           disabled={analyzing}
           onclick={handleReset}
         >
-          Reset Demo
+          Clear
         </button>
       </div>
     </div>
@@ -139,15 +240,15 @@
   {#if showAgents}
     <div class="agent-strip" aria-label="Multi-agent hierarchy status">
       {#each displayAgents as agent (agent.agent_id)}
-        <div class="agent-card">
+        <div class="agent-card" title={agent.summary || agent.role}>
           <div class="agent-card__top">
             <span class="agent-card__id">{agent.agent_id}</span>
             {#if agent.layer}
               <span class="agent-card__layer">{agent.layer}</span>
             {/if}
           </div>
-          <span class="agent-card__role">{agent.role}</span>
-          <p class="agent-card__summary">{agent.summary}</p>
+          <span class="agent-card__role">{shortRole(agent.role)}</span>
+          <p class="agent-card__summary">{condenseSummary(agent.summary)}</p>
         </div>
       {/each}
     </div>
@@ -166,7 +267,7 @@
 
   .source-top-div {
     display: grid;
-    grid-template-columns: minmax(280px, 1fr) 180px auto;
+    grid-template-columns: minmax(240px, 1.2fr) 150px minmax(220px, 1fr) auto;
     align-items: start;
     gap: 14px;
     padding: 10px 14px;
@@ -183,9 +284,47 @@
   }
 
   .source-section--type,
+  .source-section--llm,
   .source-section--actions {
     padding-left: 14px;
     border-left: 1px solid var(--border);
+  }
+
+  .source-section__llm-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .source-section__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .source-section__hint {
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 960px) {
+    .source-top-div {
+      grid-template-columns: 1fr;
+    }
+
+    .source-section--type,
+    .source-section--llm,
+    .source-section--actions {
+      padding-left: 0;
+      border-left: none;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
   }
 
   .source-section__label {
@@ -286,6 +425,22 @@
     cursor: not-allowed;
   }
 
+  .source-bar__stop {
+    padding: 7px 16px;
+    border: none;
+    border-radius: 9px;
+    background: #b91c1c;
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .source-bar__stop:hover {
+    background: #991b1b;
+  }
+
   .source-bar__reset {
     padding: 7px 13px;
     border: 1px solid var(--border-strong);
@@ -339,19 +494,24 @@
 
   .agent-strip {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
     gap: 8px;
     padding-top: 4px;
+    width: 100%;
+    min-width: 0;
   }
 
   .agent-card {
+    min-width: 0;
+    max-width: 100%;
     padding: 8px 10px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: var(--surface-muted);
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
+    overflow: hidden;
   }
 
   .agent-card__top {
@@ -359,6 +519,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 6px;
+    min-width: 0;
   }
 
   .agent-card__id {
@@ -366,9 +527,14 @@
     font-size: 11px;
     font-weight: 700;
     color: var(--blue-700);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .agent-card__layer {
+    flex-shrink: 0;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
@@ -380,16 +546,32 @@
   }
 
   .agent-card__role {
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--text);
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .agent-card__summary {
-    margin: 2px 0 0;
-    font-size: 11px;
-    line-height: 1.35;
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.3;
     color: var(--text-muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  @media (max-width: 720px) {
+    .agent-strip {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 860px) {

@@ -9,6 +9,8 @@ Architecture:
 2. **SupervisorAgent** (`c4-supervisor`):
    - Coordinates the 4 specialist subagents in top-down C4 order:
      `ContextSubagent` -> `ContainerSubagent` -> `ComponentSubagent` -> `CodeSubagent`.
+   - Context/Container run once over the whole repo; Component/Code fan out in
+     parallel across parent scopes (containers / components) then merge.
    - Enforces hierarchical parent-child traceability across layers (`parentNodeId`)
      so every Container links to a Context System, every Component links to a
      Container, and every Code module/class/interface links to a Component.
@@ -17,8 +19,8 @@ Architecture:
 3. **4 Specialist Subagents**:
    - `ContextSubagent` (`subagent-context`): System Context layer (People, Systems, External Systems).
    - `ContainerSubagent` (`subagent-container`): Container layer (Apps, APIs, Databases, Workers) traced to Context systems.
-   - `ComponentSubagent` (`subagent-component`): Component layer (Controllers, Services, Modules) traced to Containers.
-   - `CodeSubagent` (`subagent-code`): Code layer (Classes, Interfaces, Enums, Functions) traced to Components.
+   - `ComponentSubagent` (`subagent-component`): Component layer; parallel per-container discovery.
+   - `CodeSubagent` (`subagent-code`): Code layer; parallel per-component symbol discovery.
 
 Each agent is bound to its own Pfizer LLMHub adapter (see ``config/llmhub.yaml``):
 
@@ -54,8 +56,27 @@ from app.c4_service import (
     _build_legend,
     _validate_edges,
 )
+from app.cancel_registry import check_cancelled
 from app.experience_store import ExperienceStore, fingerprint_repo
+from app.folder_classifier import ProjectPlan, classify_project, refine_with_llm
+from app.layout_spacing import (
+    BOUNDARY_GAP_X,
+    BOUNDARY_GAP_Y,
+    BOUNDARY_PAD_BOTTOM,
+    BOUNDARY_PAD_TOP,
+    BOUNDARY_PAD_X,
+    CONTAINER_CELL_X,
+    CONTAINER_CELL_Y,
+    CONTEXT_CELL_X,
+    CONTEXT_CELL_Y,
+    NODE_STEP_X,
+    NODE_STEP_Y,
+    RAIL_LEFT_X,
+    RAIL_STEP_Y,
+    RAIL_TOP_Y,
+)
 from app.llmhub_adapter import LLMHubAdapter, get_adapter, is_hub_reachable
+from app.parallel_extract import map_parallel
 from app.prompts import SYSTEM_PROMPT, build_repair_prompt
 from app.repo_scanner import IGNORED_DIRS, INCLUDED_EXTENSIONS, build_repo_context
 from app.schemas import (
@@ -64,6 +85,7 @@ from app.schemas import (
     C4Edge,
     C4Node,
     EdgeData,
+    FolderClassificationModel,
     HierarchyModelResponse,
     HierarchyTreeNode,
     KINDS_BY_LAYER,
@@ -73,6 +95,7 @@ from app.schemas import (
     LLMExtraction,
     NodeData,
     Position,
+    ProjectPlanModel,
     Size,
 )
 
@@ -92,6 +115,8 @@ class RepoInventory:
     repo_name: str
     files: list[Path]
     repo_context: str
+    project_plan: ProjectPlan | None = None
+    job_id: str | None = None
 
 
 # ============================================================================
@@ -124,6 +149,7 @@ class BaseLayerSubagent:
         use_llm: bool,
         model: str | None = None,
     ) -> tuple[LayerResponse, AgentReport]:
+        check_cancelled(inventory.job_id)
         extraction: LLMExtraction | None = None
         summary_suffix = "static source analyzer"
         target_model = model or self.adapter.model
@@ -420,12 +446,112 @@ def _extract_readme_summary(root: Path, repo_title: str) -> str:
     return f"Enterprise software system and domain capabilities implemented in {repo_title}."
 
 
+def _plan_role_map(inventory: RepoInventory) -> dict[str, str]:
+    """path/name → role from Manager ProjectPlan (empty if unclassified)."""
+    plan = inventory.project_plan
+    if plan is None:
+        return {}
+    mapping: dict[str, str] = {}
+    for folder in plan.folders:
+        mapping[folder.path] = folder.role
+        mapping[folder.name] = folder.role
+        for child in folder.children:
+            mapping[child.path] = child.role
+            mapping[child.name] = child.role
+    return mapping
+
+
+def _rel_under_scope(file_path: Path, root: Path, scope: str) -> bool:
+    """True when file_path lives under scope (folder or exact file path)."""
+    rel = str(file_path.relative_to(root)).replace("\\", "/")
+    scope_norm = scope.strip().replace("\\", "/").rstrip("/")
+    if not scope_norm:
+        return False
+    return rel == scope_norm or rel.startswith(scope_norm + "/")
+
+
+def _scoped_inventory(inventory: RepoInventory, scope: str) -> RepoInventory:
+    """Filter inventory files (and a compact context) to one folder scope."""
+    scope_norm = scope.strip().replace("\\", "/").rstrip("/")
+    scoped_files = [
+        f for f in inventory.files if _rel_under_scope(f, inventory.root, scope_norm)
+    ]
+    if not scoped_files:
+        scoped_files = list(inventory.files[:30])
+
+    tree_lines = [str(f.relative_to(inventory.root)) for f in scoped_files[:250]]
+    sections: list[str] = [
+        f"## Scoped file tree ({scope_norm or 'repo'})\n",
+        "\n".join(tree_lines),
+        "\n\n## File contents\n",
+    ]
+    remaining = 8000
+    for f in scoped_files[:40]:
+        if remaining <= 0:
+            break
+        try:
+            text = f.read_text(errors="ignore")[:2000]
+        except OSError:
+            continue
+        block = f"\n### {f.relative_to(inventory.root)}\n```\n{text}\n```\n"
+        if len(block) > remaining:
+            break
+        sections.append(block)
+        remaining -= len(block)
+
+    return RepoInventory(
+        root=inventory.root,
+        source_label=inventory.source_label,
+        source_type=inventory.source_type,
+        repo_name=f"{inventory.repo_name}/{scope_norm}" if scope_norm else inventory.repo_name,
+        files=scoped_files,
+        repo_context="".join(sections),
+        project_plan=inventory.project_plan,
+    )
+
+
+def _offset_extraction(extraction: LLMExtraction, dx: float, dy: float) -> LLMExtraction:
+    """Shift absolute boundary / free-node positions so parallel units don't overlap."""
+    for boundary in extraction.boundaries:
+        boundary.position.x += dx
+        boundary.position.y += dy
+    for node in extraction.nodes:
+        if node.parentId is None:
+            node.position.x += dx
+            node.position.y += dy
+    return extraction
+
+
+def _merge_extractions(parts: list[LLMExtraction]) -> LLMExtraction:
+    boundaries: list[Boundary] = []
+    nodes: list[C4Node] = []
+    edges: list[C4Edge] = []
+    seen_nodes: set[str] = set()
+    seen_edges: set[str] = set()
+    for part in parts:
+        boundaries.extend(part.boundaries)
+        for node in part.nodes:
+            if node.id in seen_nodes:
+                continue
+            seen_nodes.add(node.id)
+            nodes.append(node)
+        for edge in part.edges:
+            if edge.id in seen_edges:
+                continue
+            seen_edges.add(edge.id)
+            edges.append(edge)
+    return LLMExtraction(boundaries=boundaries, nodes=nodes, edges=edges)
+
+
 def _discover_container_profiles(inventory: RepoInventory) -> list[ContainerProfile]:
     top_groups: dict[str, list[Path]] = {}
     for f in inventory.files:
         rel = f.relative_to(inventory.root)
         top = rel.parts[0] if len(rel.parts) > 1 else "root"
         top_groups.setdefault(top, []).append(f)
+
+    role_map = _plan_role_map(inventory)
+    plan = inventory.project_plan
 
     # Merge closely paired architectural directories so all key containers are preserved cleanly
     merged_groups: list[tuple[list[str], list[Path]]] = []
@@ -446,11 +572,49 @@ def _discover_container_profiles(inventory: RepoInventory) -> list[ContainerProf
             continue
         if folder == "root" and len(top_groups) > 1:
             continue
+        role = role_map.get(folder)
+        # Skip folders Manager classified as ignore / pure shared libraries
+        # (shared still participates as components later; not as containers).
+        if role == "ignore":
+            continue
+        if role == "shared" and plan is not None and plan.style == "service_monorepo":
+            continue
+        # Feature-module repos: only runtime-classified folders become containers;
+        # domain component folders are owned scopes, not separate containers.
+        if (
+            plan is not None
+            and plan.style == "feature_modules"
+            and role == "component"
+        ):
+            continue
+        if role == "component" and plan is not None and plan.containers:
+            # When explicit containers exist, don't also promote sibling components.
+            continue
         merged_groups.append(([folder], files))
 
     if not merged_groups:
-        for folder, files in top_groups.items():
-            merged_groups.append(([folder], files))
+        # Fallback: classified containers first; for feature_modules with only
+        # domain folders, synthesize one Application container owning them.
+        if plan is not None and plan.containers:
+            for cont in plan.containers:
+                files = top_groups.get(cont.name) or top_groups.get(cont.path.split("/")[0], [])
+                if files:
+                    merged_groups.append(([cont.name], files))
+        if not merged_groups and plan is not None and plan.style == "feature_modules":
+            component_names = [
+                f.name for f in plan.folders if f.role in {"component", "shared"}
+            ]
+            owned_files: list[Path] = []
+            for name in component_names:
+                owned_files.extend(top_groups.get(name, []))
+            if owned_files:
+                scope_folders = component_names or ["app"]
+                merged_groups.append((scope_folders, owned_files))
+        if not merged_groups:
+            for folder, files in top_groups.items():
+                if role_map.get(folder) == "ignore":
+                    continue
+                merged_groups.append(([folder], files))
 
     def _score_group(item: tuple[list[str], list[Path]]) -> tuple[int, int, int]:
         folders, files = item
@@ -779,8 +943,8 @@ class ContextSubagent(BaseLayerSubagent):
         # Create an overarching Business Context boundary that frames the business reference nodes
         cols = min(2, max(1, len(profiles)))
         rows = (len(profiles) + cols - 1) // cols
-        b_width = max(560, cols * 285 + 70)
-        b_height = max(270, rows * 195 + 100)
+        b_width = max(640, cols * CONTEXT_CELL_X + 90)
+        b_height = max(320, rows * CONTEXT_CELL_Y + 120)
         biz_boundary_id = f"boundary-context-{_slug(inventory.repo_name)}"
 
         boundaries = [
@@ -791,7 +955,7 @@ class ContextSubagent(BaseLayerSubagent):
                 description=readme_summary,
                 upperLayer="context",
                 sourceNodeId=None,
-                position=Position(x=310, y=40),
+                position=Position(x=340, y=40),
                 size=Size(width=b_width, height=b_height),
             )
         ]
@@ -805,7 +969,7 @@ class ContextSubagent(BaseLayerSubagent):
             nodes.append(
                 C4Node(
                     id=actor_id,
-                    position=Position(x=25, y=80 + idx * 210),
+                    position=Position(x=RAIL_LEFT_X, y=RAIL_TOP_Y + idx * RAIL_STEP_Y),
                     data=NodeData(
                         kind="person",
                         name=actor_name,
@@ -824,7 +988,10 @@ class ContextSubagent(BaseLayerSubagent):
             nodes.append(
                 C4Node(
                     id=prof.business_id,
-                    position=Position(x=35 + col * 275, y=78 + row * 185),
+                    position=Position(
+                        x=48 + col * CONTEXT_CELL_X,
+                        y=100 + row * CONTEXT_CELL_Y,
+                    ),
                     parentId=biz_boundary_id,
                     extent="parent",
                     data=NodeData(
@@ -885,12 +1052,12 @@ class ContextSubagent(BaseLayerSubagent):
 
         # 3. External Business & Platform Systems on the right
         externals = _discover_external_systems(inventory)
-        ext_x = 310 + b_width + 65
+        ext_x = 340 + b_width + BOUNDARY_GAP_X
         for idx, (ext_id, ext_name, ext_tech, ext_desc) in enumerate(externals):
             nodes.append(
                 C4Node(
                     id=ext_id,
-                    position=Position(x=ext_x, y=60 + idx * 185),
+                    position=Position(x=ext_x, y=RAIL_TOP_Y + idx * RAIL_STEP_Y),
                     data=NodeData(
                         kind="systemExternal",
                         name=ext_name,
@@ -936,11 +1103,11 @@ class ContainerSubagent(BaseLayerSubagent):
         edges: list[C4Edge] = []
 
         grid_cols = min(3, max(1, len(profiles)))
-        box_w = 305
-        box_h = 280
-        gap_x = 45
-        gap_y = 48
-        start_x = 290
+        box_w = max(340, CONTAINER_CELL_X + 40)
+        box_h = max(320, CONTAINER_CELL_Y + 100)
+        gap_x = BOUNDARY_GAP_X
+        gap_y = BOUNDARY_GAP_Y
+        start_x = 340
         start_y = 40
 
         for idx, prof in enumerate(profiles):
@@ -974,7 +1141,7 @@ class ContainerSubagent(BaseLayerSubagent):
             nodes.append(
                 C4Node(
                     id=prof.container_id,
-                    position=Position(x=42, y=102),
+                    position=Position(x=BOUNDARY_PAD_X, y=BOUNDARY_PAD_TOP),
                     parentId=boundary_id,
                     extent="parent",
                     data=NodeData(
@@ -997,7 +1164,7 @@ class ContainerSubagent(BaseLayerSubagent):
             nodes.append(
                 C4Node(
                     id=actor_node_id,
-                    position=Position(x=20, y=80 + idx * 220),
+                    position=Position(x=RAIL_LEFT_X, y=RAIL_TOP_Y + idx * RAIL_STEP_Y),
                     data=NodeData(
                         kind="person",
                         name=actor.data.name,
@@ -1042,13 +1209,13 @@ class ContainerSubagent(BaseLayerSubagent):
                 )
             )
 
-        right_edge_x = start_x + grid_cols * (box_w + gap_x) + 25
+        right_edge_x = start_x + grid_cols * (box_w + gap_x) + BOUNDARY_GAP_X
         for idx, ext in enumerate(ext_parents[:3]):
             ext_node_id = f"cont-{ext.id}"
             nodes.append(
                 C4Node(
                     id=ext_node_id,
-                    position=Position(x=right_edge_x, y=60 + idx * 195),
+                    position=Position(x=right_edge_x, y=RAIL_TOP_Y + idx * RAIL_STEP_Y),
                     data=NodeData(
                         kind="systemExternal",
                         name=ext.data.name,
@@ -1086,6 +1253,75 @@ def _extract_components_for_container(
         # Infer from container id or name
         inferred = container_node.id.removeprefix("cont-")
         scope_folders = [inferred]
+
+    # Prefer Manager-classified component / shared folders when this container
+    # owns them (sourceScope match) or is the sole runtime for a feature_modules app.
+    plan = inventory.project_plan
+    planned_component_scopes: list[str] = []
+    if plan is not None:
+        sole_runtime = plan.style == "feature_modules" and len(plan.containers) <= 1
+        scope_owns_all_features = sole_runtime or (
+            plan.style == "feature_modules"
+            and len(scope_folders) > 1
+            and all(
+                any(f.name == s or f.path == s for f in plan.folders)
+                for s in scope_folders
+            )
+        )
+        for folder in plan.folders:
+            if folder.role in {"component", "shared"}:
+                owned = (
+                    folder.name in scope_folders
+                    or folder.path in scope_folders
+                    or folder.path.split("/")[0] in scope_folders
+                    or scope_owns_all_features
+                )
+                if owned:
+                    planned_component_scopes.append(folder.path)
+            for child in folder.children:
+                if child.role in {"component", "shared"} and (
+                    folder.name in scope_folders
+                    or folder.path in scope_folders
+                    or any(
+                        child.path.startswith(s.rstrip("/") + "/")
+                        for s in scope_folders
+                    )
+                ):
+                    planned_component_scopes.append(child.path)
+
+    if planned_component_scopes:
+        components_from_plan: list[dict] = []
+        for scope in planned_component_scopes[:max_components]:
+            scope_files = [
+                f
+                for f in inventory.files
+                if _rel_under_scope(f, inventory.root, scope)
+            ]
+            if not scope_files:
+                continue
+            rep = sorted(
+                scope_files,
+                key=lambda p: (p.suffix in CODE_EXTS, len(p.stem)),
+                reverse=True,
+            )[0]
+            rel_rep = rep.relative_to(inventory.root)
+            readable = _humanize_token(Path(scope).name)
+            components_from_plan.append(
+                {
+                    "id": f"comp-{_slug(container_node.id)}-{_slug(scope)}",
+                    "name": f"{readable} ({_humanize_token(scope_folders[0] if scope_folders else 'app')})",
+                    "technology": f"{rep.suffix.lstrip('.') or 'module'} · {len(scope_files)} files",
+                    "description": (
+                        f"Major component folder `{scope}` "
+                        f"({len(scope_files)} files). {_summarize_file(rep, rel_rep)}"
+                    )[:210],
+                    "parentNodeId": container_node.id,
+                    "sourceScope": scope,
+                    "files": scope_files,
+                }
+            )
+        if components_from_plan:
+            return components_from_plan
 
     scoped_files: list[Path] = []
     for f in inventory.files:
@@ -1215,42 +1451,173 @@ class ComponentSubagent(BaseLayerSubagent):
     role = "Component Layer Specialist Subagent"
     layer: Layer = "component"
 
-    def extract_deterministic(
-        self, inventory: RepoInventory, parent_nodes: list[C4Node]
-    ) -> LLMExtraction:
-        in_scope_containers = [
+    def run(
+        self,
+        inventory: RepoInventory,
+        parent_nodes: list[C4Node],
+        use_llm: bool,
+        model: str | None = None,
+    ) -> tuple[LayerResponse, AgentReport]:
+        containers = [
             p for p in parent_nodes if p.data.kind in ("container", "containerDb")
-        ] or parent_nodes
+        ]
+        # Parallel scoped LLM fan-out when multiple containers are in play.
+        if use_llm and len(containers) > 1:
+            target_model = model or self.adapter.model
+            try:
+                extraction = self._extract_parallel_llm(
+                    inventory, containers, target_model
+                )
+                extraction = self._ensure_parent_links(extraction, parent_nodes)
+                if self.experience_store is not None:
+                    try:
+                        rel_paths = [
+                            str(p.relative_to(inventory.root))
+                            if p.is_relative_to(inventory.root)
+                            else str(p)
+                            for p in inventory.files
+                        ]
+                        fp = fingerprint_repo(inventory.repo_name, rel_paths)
+                        self.experience_store.remember_from_extraction(
+                            repo_fingerprint=fp,
+                            repo_name=inventory.repo_name,
+                            extraction=extraction,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "[%s] experience store write skipped: %s",
+                            self.agent_id,
+                            exc,
+                        )
+                response = LayerResponse(
+                    layer=self.layer,
+                    title=LAYER_TITLES[self.layer],
+                    subtitle=self._build_subtitle(inventory, parent_nodes),
+                    description=LAYER_DESCRIPTIONS[self.layer],
+                    note=LAYER_NOTES[self.layer],
+                    legend=_build_legend(extraction),
+                    boundaries=extraction.boundaries,
+                    nodes=extraction.nodes,
+                    edges=extraction.edges,
+                )
+                report = AgentReport(
+                    agent_id=self.agent_id,
+                    role=self.role,
+                    layer=self.layer,
+                    status="completed",
+                    summary=(
+                        f"Extracted {len(response.nodes)} component nodes across "
+                        f"{len(containers)} containers in parallel via LLMHub "
+                        f"{self.adapter.tier}/{target_model}."
+                    ),
+                    produced_nodes=len(response.nodes),
+                    produced_edges=len(response.edges),
+                )
+                return response, report
+            except Exception as exc:
+                logger.warning(
+                    "[%s] parallel LLM fan-out failed (%s); falling back.",
+                    self.agent_id,
+                    exc,
+                )
 
-        # Carry forward EVERY upper-layer Container into the Component layer as an
-        # enlarged, transparent-bordered boundary that zooms in and opens up to
-        # explain the internal components inside that container!
+        response, report = super().run(inventory, parent_nodes, use_llm, model)
+        if len(containers) > 1 and "parallel" not in report.summary:
+            report.summary = (
+                f"{report.summary} "
+                f"(discovery fan-out across {len(containers)} containers)."
+            )
+        return response, report
+
+    def _extract_parallel_llm(
+        self,
+        inventory: RepoInventory,
+        containers: list[C4Node],
+        model: str,
+    ) -> LLMExtraction:
+        def _unit(cont: C4Node) -> LLMExtraction:
+            scope = (cont.data.sourceScope or cont.id.removeprefix("cont-")).split(",")[0]
+            scoped = _scoped_inventory(inventory, scope.strip())
+            try:
+                return self._extract_via_llm(scoped, [cont], model)
+            except Exception as exc:
+                logger.debug(
+                    "[%s] scoped LLM failed for %s (%s); deterministic unit.",
+                    self.agent_id,
+                    cont.id,
+                    exc,
+                )
+                return self._layout_container_components(
+                    inventory,
+                    [
+                        (
+                            cont,
+                            _extract_components_for_container(
+                                inventory, cont, inventory.files[:4], max_components=4
+                            ),
+                        )
+                    ],
+                )
+
+        parts = map_parallel(_unit, containers, label="component")
+        staggered: list[LLMExtraction] = []
+        for idx, part in enumerate(parts):
+            staggered.append(
+                _offset_extraction(part, dx=(idx % 2) * 720.0, dy=(idx // 2) * 520.0)
+            )
+        merged = _merge_extractions(staggered)
+        _validate_edges(merged)
+        return merged
+
+    def _layout_container_components(
+        self,
+        inventory: RepoInventory,
+        container_comp_pairs: list[tuple[C4Node, list[dict]]],
+    ) -> LLMExtraction:
+        """Build boundaries/nodes/edges for precomputed per-container component lists."""
+        del inventory  # layout is driven by precomputed component dicts
+        container_cols = 2 if len(container_comp_pairs) > 1 else 1
+        comp_cols = 2
+        node_step_x = NODE_STEP_X
+        node_step_y = NODE_STEP_Y
+        pad_x = BOUNDARY_PAD_X
+        pad_top = BOUNDARY_PAD_TOP
+        pad_bottom = BOUNDARY_PAD_BOTTOM
+
+        container_groups: list[tuple[C4Node, list[dict], int, int]] = []
+        for cont, comps in container_comp_pairs:
+            c_cols = min(comp_cols, max(1, len(comps)))
+            c_rows = (len(comps) + c_cols - 1) // c_cols
+            b_w = max(640, c_cols * node_step_x + pad_x * 2)
+            b_h = max(320, c_rows * node_step_y + pad_top + pad_bottom)
+            container_groups.append((cont, comps, b_w, b_h))
+
+        return self._finalize_component_layout(
+            container_groups,
+            container_cols=container_cols,
+            comp_cols=comp_cols,
+            node_step_x=node_step_x,
+            node_step_y=node_step_y,
+            pad_x=pad_x,
+            pad_top=pad_top,
+        )
+
+    def _finalize_component_layout(
+        self,
+        container_groups: list[tuple[C4Node, list[dict], int, int]],
+        *,
+        container_cols: int,
+        comp_cols: int,
+        node_step_x: int,
+        node_step_y: int,
+        pad_x: int,
+        pad_top: int,
+    ) -> LLMExtraction:
         boundaries: list[Boundary] = []
         nodes: list[C4Node] = []
         edges: list[C4Edge] = []
 
-        # Layout container boundaries in a 2-column grid of enlarged transparent boxes
-        container_cols = 2 if len(in_scope_containers) > 1 else 1
-        comp_cols = 2
-        node_step_x = 258
-        node_step_y = 178
-        pad_x = 36
-        pad_top = 102  # Room at the top of the transparent border for the zoomed-in container header
-        pad_bottom = 34
-
-        # Precompute components per container so we can size each enlarged boundary accurately
-        container_groups: list[tuple[C4Node, list[dict], int, int]] = []
-        for cont in in_scope_containers:
-            comps = _extract_components_for_container(
-                inventory, cont, inventory.files[:4], max_components=4
-            )
-            c_cols = min(comp_cols, max(1, len(comps)))
-            c_rows = (len(comps) + c_cols - 1) // c_cols
-            b_w = max(560, c_cols * node_step_x + pad_x * 2)
-            b_h = max(270, c_rows * node_step_y + pad_top + pad_bottom)
-            container_groups.append((cont, comps, b_w, b_h))
-
-        col_width = max((g[2] for g in container_groups), default=580) + 55
+        col_width = max((g[2] for g in container_groups), default=640) + BOUNDARY_GAP_X
         row_heights: dict[int, int] = {}
         for idx, (_, _, _, b_h) in enumerate(container_groups):
             r = idx // container_cols
@@ -1262,7 +1629,7 @@ class ComponentSubagent(BaseLayerSubagent):
             b_col = idx % container_cols
             b_row = idx // container_cols
             bx = 40 + b_col * col_width
-            by = 40 + sum(row_heights[r] + 55 for r in range(b_row))
+            by = 40 + sum(row_heights[r] + BOUNDARY_GAP_Y for r in range(b_row))
 
             boundary_id = f"boundary-{cont.id}"
             boundaries.append(
@@ -1307,7 +1674,6 @@ class ComponentSubagent(BaseLayerSubagent):
             if comp_ids_in_container:
                 first_comp_by_container.append(comp_ids_in_container[0])
 
-            # Connect components inside the same zoomed-in container
             for i in range(len(comp_ids_in_container) - 1):
                 edges.append(
                     C4Edge(
@@ -1319,7 +1685,6 @@ class ComponentSubagent(BaseLayerSubagent):
                     )
                 )
 
-        # Connect primary components across zoomed-in containers to show cross-container component flow
         for i in range(len(first_comp_by_container) - 1):
             edges.append(
                 C4Edge(
@@ -1332,6 +1697,23 @@ class ComponentSubagent(BaseLayerSubagent):
             )
 
         return LLMExtraction(boundaries=boundaries, nodes=nodes, edges=edges)
+
+    def extract_deterministic(
+        self, inventory: RepoInventory, parent_nodes: list[C4Node]
+    ) -> LLMExtraction:
+        in_scope_containers = [
+            p for p in parent_nodes if p.data.kind in ("container", "containerDb")
+        ] or parent_nodes
+
+        # Parallel discovery: one worker per container, then shared layout pass.
+        def _discover(cont: C4Node) -> tuple[C4Node, list[dict]]:
+            comps = _extract_components_for_container(
+                inventory, cont, inventory.files[:4], max_components=4
+            )
+            return cont, comps
+
+        pairs = map_parallel(_discover, list(in_scope_containers), label="component-discover")
+        return self._layout_container_components(inventory, pairs)
 
 
 def _extract_symbols_from_files(
@@ -1473,83 +1855,210 @@ class CodeSubagent(BaseLayerSubagent):
     role = "Code Layer Specialist Subagent"
     layer: Layer = "code"
 
-    def extract_deterministic(
-        self, inventory: RepoInventory, parent_nodes: list[C4Node]
-    ) -> LLMExtraction:
-        component_parents = [p for p in parent_nodes if p.data.kind == "component"] or parent_nodes
+    def run(
+        self,
+        inventory: RepoInventory,
+        parent_nodes: list[C4Node],
+        use_llm: bool,
+        model: str | None = None,
+    ) -> tuple[LayerResponse, AgentReport]:
+        components = [p for p in parent_nodes if p.data.kind == "component"]
+        selected = self._select_components(components or parent_nodes)
+        if use_llm and len(selected) > 1:
+            target_model = model or self.adapter.model
+            try:
+                extraction = self._extract_parallel_llm(
+                    inventory, selected, target_model
+                )
+                extraction = self._ensure_parent_links(extraction, parent_nodes)
+                if self.experience_store is not None:
+                    try:
+                        rel_paths = [
+                            str(p.relative_to(inventory.root))
+                            if p.is_relative_to(inventory.root)
+                            else str(p)
+                            for p in inventory.files
+                        ]
+                        fp = fingerprint_repo(inventory.repo_name, rel_paths)
+                        self.experience_store.remember_from_extraction(
+                            repo_fingerprint=fp,
+                            repo_name=inventory.repo_name,
+                            extraction=extraction,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "[%s] experience store write skipped: %s",
+                            self.agent_id,
+                            exc,
+                        )
+                response = LayerResponse(
+                    layer=self.layer,
+                    title=LAYER_TITLES[self.layer],
+                    subtitle=self._build_subtitle(inventory, parent_nodes),
+                    description=LAYER_DESCRIPTIONS[self.layer],
+                    note=LAYER_NOTES[self.layer],
+                    legend=_build_legend(extraction),
+                    boundaries=extraction.boundaries,
+                    nodes=extraction.nodes,
+                    edges=extraction.edges,
+                )
+                report = AgentReport(
+                    agent_id=self.agent_id,
+                    role=self.role,
+                    layer=self.layer,
+                    status="completed",
+                    summary=(
+                        f"Extracted {len(response.nodes)} code nodes across "
+                        f"{len(selected)} components in parallel via LLMHub "
+                        f"{self.adapter.tier}/{target_model}."
+                    ),
+                    produced_nodes=len(response.nodes),
+                    produced_edges=len(response.edges),
+                )
+                return response, report
+            except Exception as exc:
+                logger.warning(
+                    "[%s] parallel LLM fan-out failed (%s); falling back.",
+                    self.agent_id,
+                    exc,
+                )
 
-        # Select components across ALL parent containers so every container's components
-        # are carried forward with enlarged transparent borders in the Code layer!
+        response, report = super().run(inventory, parent_nodes, use_llm, model)
+        if len(selected) > 1 and "parallel" not in report.summary:
+            report.summary = (
+                f"{report.summary} "
+                f"(discovery fan-out across {len(selected)} components)."
+            )
+        return response, report
+
+    def _select_components(self, component_parents: list[C4Node]) -> list[C4Node]:
         by_container: dict[str, list[C4Node]] = {}
         for comp in component_parents:
             cid = comp.data.parentNodeId or "default"
             by_container.setdefault(cid, []).append(comp)
 
-        selected_components: list[C4Node] = []
+        selected: list[C4Node] = []
         round_idx = 0
-        while len(selected_components) < min(8, len(component_parents)):
+        while len(selected) < min(8, len(component_parents)):
             added_any = False
-            for cid, comp_list in by_container.items():
-                if round_idx < len(comp_list) and len(selected_components) < 8:
-                    selected_components.append(comp_list[round_idx])
+            for _cid, comp_list in by_container.items():
+                if round_idx < len(comp_list) and len(selected) < 8:
+                    selected.append(comp_list[round_idx])
                     added_any = True
             if not added_any:
                 break
             round_idx += 1
+        return selected
 
+    def _files_for_component(
+        self, inventory: RepoInventory, comp: C4Node
+    ) -> list[Path]:
+        scope = comp.data.sourceScope or ""
+        matched_files = [
+            f
+            for f in inventory.files
+            if scope
+            and str(f.relative_to(inventory.root)).replace("\\", "/").startswith(scope)
+            and f.suffix in CODE_EXTS
+        ]
+        if not matched_files and scope:
+            top_scope = scope.split("/")[0]
+            matched_files = [
+                f
+                for f in inventory.files
+                if str(f.relative_to(inventory.root))
+                .replace("\\", "/")
+                .startswith(top_scope + "/")
+                and f.suffix in CODE_EXTS
+            ]
+        if not matched_files:
+            matched_files = [
+                f for f in inventory.files if f.stem.lower() in comp.data.name.lower()
+            ] or [f for f in inventory.files if f.suffix in CODE_EXTS][:3]
+        return matched_files
+
+    def _extract_parallel_llm(
+        self,
+        inventory: RepoInventory,
+        components: list[C4Node],
+        model: str,
+    ) -> LLMExtraction:
+        def _unit(comp: C4Node) -> LLMExtraction:
+            scope = comp.data.sourceScope or ""
+            scoped = _scoped_inventory(inventory, scope) if scope else inventory
+            try:
+                return self._extract_via_llm(scoped, [comp], model)
+            except Exception as exc:
+                logger.debug(
+                    "[%s] scoped LLM failed for %s (%s); deterministic unit.",
+                    self.agent_id,
+                    comp.id,
+                    exc,
+                )
+                files = self._files_for_component(inventory, comp)
+                syms = _extract_symbols_from_files(
+                    files, inventory, comp, max_symbols=2
+                )
+                return self._layout_code_symbols([(comp, syms)])
+
+        parts = map_parallel(_unit, components, label="code")
+        staggered: list[LLMExtraction] = []
+        for idx, part in enumerate(parts):
+            staggered.append(
+                _offset_extraction(part, dx=(idx % 2) * 640.0, dy=(idx // 2) * 480.0)
+            )
+        merged = _merge_extractions(staggered)
+        _validate_edges(merged)
+        return merged
+
+    def _layout_code_symbols(
+        self, comp_sym_pairs: list[tuple[C4Node, list[dict]]]
+    ) -> LLMExtraction:
         boundaries: list[Boundary] = []
         nodes: list[C4Node] = []
         edges: list[C4Edge] = []
 
-        grid_cols = 2 if len(selected_components) > 1 else 1
-        node_step_x = 255
-        pad_x = 34
-        pad_top = 102
-        pad_bottom = 32
+        kind_order = {"codeInterface": 0, "codeClass": 1, "codeEnum": 2}
 
-        comp_symbol_groups: list[tuple[C4Node, list[dict], int, int]] = []
-        for comp in selected_components:
-            scope = comp.data.sourceScope or ""
-            matched_files = [
-                f
-                for f in inventory.files
-                if scope
-                and str(f.relative_to(inventory.root)).startswith(scope)
-                and f.suffix in CODE_EXTS
-            ]
-            if not matched_files and scope:
-                top_scope = scope.split("/")[0]
-                matched_files = [
-                    f
-                    for f in inventory.files
-                    if str(f.relative_to(inventory.root)).startswith(top_scope + "/")
-                    and f.suffix in CODE_EXTS
-                ]
-            if not matched_files:
-                matched_files = [
-                    f for f in inventory.files if f.stem.lower() in comp.data.name.lower()
-                ] or [f for f in inventory.files if f.suffix in CODE_EXTS][:3]
+        def _sorted_syms(syms: list[dict]) -> list[dict]:
+            return sorted(
+                syms,
+                key=lambda s: (
+                    kind_order.get(str(s.get("kind") or ""), 9),
+                    str(s.get("name") or ""),
+                ),
+            )
 
-            syms = _extract_symbols_from_files(matched_files, inventory, comp, max_symbols=2)
+        grid_cols = 2 if len(comp_sym_pairs) > 1 else 1
+        node_step_x = NODE_STEP_X
+        node_step_y = NODE_STEP_Y
+        pad_x = BOUNDARY_PAD_X
+        pad_top = BOUNDARY_PAD_TOP
+        pad_bottom = BOUNDARY_PAD_BOTTOM
+        card_w = 200
+
+        comp_symbol_groups: list[tuple[C4Node, list[dict], int, int, int]] = []
+        for comp, raw_syms in comp_sym_pairs:
+            syms = _sorted_syms(raw_syms)
             s_cols = min(2, max(1, len(syms)))
-            s_rows = (len(syms) + s_cols - 1) // s_cols
-            b_w = max(320, s_cols * node_step_x + pad_x * 2)
-            b_h = max(255, s_rows * 175 + pad_top + pad_bottom)
-            comp_symbol_groups.append((comp, syms, b_w, b_h))
+            s_rows = (len(syms) + s_cols - 1) // s_cols if syms else 1
+            b_w = max(360, s_cols * node_step_x + pad_x * 2 - (node_step_x - card_w))
+            b_h = max(300, s_rows * node_step_y + pad_top + pad_bottom)
+            comp_symbol_groups.append((comp, syms, b_w, b_h, s_cols))
 
-        col_width = max((g[2] for g in comp_symbol_groups), default=560) + 50
+        col_width = max((g[2] for g in comp_symbol_groups), default=640) + BOUNDARY_GAP_X
         row_heights: dict[int, int] = {}
-        for idx, (_, _, _, b_h) in enumerate(comp_symbol_groups):
+        for idx, (_, _, _, b_h, _) in enumerate(comp_symbol_groups):
             r = idx // grid_cols
             row_heights[r] = max(row_heights.get(r, 0), b_h)
 
         first_sym_per_comp: list[str] = []
 
-        for idx, (comp, syms, b_w, b_h) in enumerate(comp_symbol_groups):
+        for idx, (comp, syms, b_w, b_h, s_cols) in enumerate(comp_symbol_groups):
             b_col = idx % grid_cols
             b_row = idx // grid_cols
             bx = 40 + b_col * col_width
-            by = 40 + sum(row_heights[r] + 50 for r in range(b_row))
+            by = 40 + sum(row_heights[r] + BOUNDARY_GAP_Y for r in range(b_row))
 
             boundary_id = f"boundary-code-{comp.id}"
             boundaries.append(
@@ -1567,15 +2076,17 @@ class CodeSubagent(BaseLayerSubagent):
 
             sym_ids: list[str] = []
             for s_idx, sym in enumerate(syms):
-                scol = s_idx % 2
-                srow = s_idx // 2
+                scol = s_idx % s_cols
+                srow = s_idx // s_cols
+                if len(syms) == 1:
+                    x = max(pad_x, int((b_w - card_w) / 2))
+                else:
+                    x = pad_x + scol * node_step_x
+                y = pad_top + srow * node_step_y
                 nodes.append(
                     C4Node(
                         id=sym["id"],
-                        position=Position(
-                            x=pad_x + scol * node_step_x,
-                            y=pad_top + srow * 175,
-                        ),
+                        position=Position(x=x, y=y),
                         parentId=boundary_id,
                         extent="parent",
                         data=NodeData(
@@ -1592,16 +2103,21 @@ class CodeSubagent(BaseLayerSubagent):
             if sym_ids:
                 first_sym_per_comp.append(sym_ids[0])
 
-            for i in range(len(sym_ids) - 1):
-                edges.append(
-                    C4Edge(
-                        id=f"e-code-intra-{sym_ids[i]}-{sym_ids[i + 1]}",
-                        source=sym_ids[i],
-                        target=sym_ids[i + 1],
-                        label="invokes / types",
-                        data=EdgeData(technology=None),
+            # Only link horizontal neighbors — avoids diagonal spaghetti on a 2-col grid.
+            for s_idx, src_id in enumerate(sym_ids):
+                scol = s_idx % s_cols
+                srow = s_idx // s_cols
+                right_idx = s_idx + 1
+                if scol + 1 < s_cols and right_idx < len(sym_ids) and right_idx // s_cols == srow:
+                    edges.append(
+                        C4Edge(
+                            id=f"e-code-intra-{src_id}-{sym_ids[right_idx]}",
+                            source=src_id,
+                            target=sym_ids[right_idx],
+                            label="types / uses",
+                            data=EdgeData(technology=None),
+                        )
                     )
-                )
 
         for i in range(len(first_sym_per_comp) - 1):
             edges.append(
@@ -1615,6 +2131,20 @@ class CodeSubagent(BaseLayerSubagent):
             )
 
         return LLMExtraction(boundaries=boundaries, nodes=nodes, edges=edges)
+
+    def extract_deterministic(
+        self, inventory: RepoInventory, parent_nodes: list[C4Node]
+    ) -> LLMExtraction:
+        component_parents = [p for p in parent_nodes if p.data.kind == "component"] or parent_nodes
+        selected_components = self._select_components(component_parents)
+
+        def _discover(comp: C4Node) -> tuple[C4Node, list[dict]]:
+            files = self._files_for_component(inventory, comp)
+            syms = _extract_symbols_from_files(files, inventory, comp, max_symbols=2)
+            return comp, syms
+
+        pairs = map_parallel(_discover, selected_components, label="code-discover")
+        return self._layout_code_symbols(pairs)
 
 
 def _summarize_file(file_path: Path, rel_path: Path) -> str:
@@ -1682,8 +2212,10 @@ class SupervisorAgent:
         reports: list[AgentReport] = []
         previous_nodes: list[C4Node] = []
 
+        # Context + Container: sequential (whole-repo). Component + Code: each
+        # specialist fans out in parallel across its parent scopes internally.
         for subagent in self.subagents:
-            # Specialists always use their medium-tier adapter model unless overridden.
+            check_cancelled(inventory.job_id)
             layer_resp, sub_report = subagent.run(
                 inventory=inventory,
                 parent_nodes=previous_nodes,
@@ -1693,10 +2225,24 @@ class SupervisorAgent:
             layers_out[subagent.layer] = layer_resp
             reports.append(sub_report)
             previous_nodes = layer_resp.nodes
+            check_cancelled(inventory.job_id)
 
         hierarchy = self.build_hierarchy_tree(layers_out)
         total_nodes = sum(len(l.nodes) for l in layers_out.values())
         total_edges = sum(len(l.edges) for l in layers_out.values())
+
+        container_layer = layers_out.get("container")
+        component_layer = layers_out.get("component")
+        container_count = sum(
+            1
+            for n in (container_layer.nodes if container_layer else [])
+            if n.data.kind in ("container", "containerDb")
+        )
+        component_count = sum(
+            1
+            for n in (component_layer.nodes if component_layer else [])
+            if n.data.kind == "component"
+        )
 
         hierarchy_note = ""
         if use_llm:
@@ -1716,7 +2262,8 @@ class SupervisorAgent:
             layer=None,
             status="completed",
             summary=(
-                f"Coordinated 4 specialist subagents (Context -> Container -> Component -> Code) "
+                f"Coordinated 4 specialist subagents (Context -> Container -> "
+                f"parallel Component×{container_count or 1} -> parallel Code×{component_count or 1}) "
                 f"via LLMHub {self.adapter.tier}/{self.adapter.model} and verified parent-child "
                 f"hierarchy across {total_nodes} nodes and {total_edges} edges."
                 + (f" {hierarchy_note}" if hierarchy_note else "")
@@ -1799,6 +2346,37 @@ class SupervisorAgent:
 # ============================================================================
 
 
+def _folder_classification_to_model(node) -> FolderClassificationModel:
+    return FolderClassificationModel(
+        path=node.path,
+        name=node.name,
+        depth=node.depth,
+        role=node.role,
+        confidence=node.confidence,
+        evidence=list(node.evidence),
+        scores=dict(node.scores),
+        file_count=node.file_count,
+        code_file_count=node.code_file_count,
+        extensions=list(node.extensions),
+        children=[_folder_classification_to_model(c) for c in node.children],
+        refined_by_llm=node.refined_by_llm,
+    )
+
+
+def _project_plan_to_model(plan: ProjectPlan) -> ProjectPlanModel:
+    payload = plan.to_dict()
+    return ProjectPlanModel(
+        root=payload["root"],
+        repo_name=payload["repo_name"],
+        style=payload["style"],
+        summary=payload["summary"],
+        folders=[_folder_classification_to_model(f) for f in plan.folders],
+        container_scopes=payload["container_scopes"],
+        component_scopes=payload["component_scopes"],
+        shared_scopes=payload["shared_scopes"],
+    )
+
+
 class ManagerAgent:
     agent_id = "c4-manager"
     role = "Repository & Architecture Manager Agent"
@@ -1819,6 +2397,7 @@ class ManagerAgent:
         source_type: str | None = None,
         use_llm: bool = False,
         model: str | None = None,
+        job_id: str | None = None,
     ) -> HierarchyModelResponse:
         cleaned = source.strip()
         if not cleaned:
@@ -1826,10 +2405,12 @@ class ManagerAgent:
 
         temp_dir: str | None = None
         try:
+            check_cancelled(job_id)
             root_path, resolved_type, repo_name = self._resolve_source(cleaned, expected_type=source_type)
             if resolved_type == "github":
                 temp_dir = str(root_path)
 
+            check_cancelled(job_id)
             files = [
                 p
                 for p in sorted(root_path.rglob("*"))
@@ -1842,7 +2423,26 @@ class ManagerAgent:
                     f"No supported source files found in '{cleaned}'."
                 )
 
+            check_cancelled(job_id)
             repo_context = build_repo_context(str(root_path))
+
+            project_plan = classify_project(
+                root_path, files, repo_name=repo_name
+            )
+            check_cancelled(job_id)
+            llm_ready = bool(use_llm and is_hub_reachable())
+            if llm_ready:
+                try:
+                    project_plan = refine_with_llm(
+                        project_plan, self.adapter, model=model
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[%s] project plan LLM refine skipped: %s",
+                        self.agent_id,
+                        exc,
+                    )
+
             inventory = RepoInventory(
                 root=root_path,
                 source_label=cleaned,
@@ -1850,22 +2450,26 @@ class ManagerAgent:
                 repo_name=repo_name,
                 files=files,
                 repo_context=repo_context,
+                project_plan=project_plan,
+                job_id=job_id,
             )
 
-            llm_ready = bool(use_llm and is_hub_reachable())
+            check_cancelled(job_id)
             layers, hierarchy, sub_reports = self.supervisor.coordinate(
                 inventory=inventory,
                 use_llm=llm_ready,
                 model=model,
             )
 
+            plan_model = _project_plan_to_model(project_plan)
             manager_report = AgentReport(
                 agent_id=self.agent_id,
                 role=self.role,
                 layer=None,
                 status="completed",
                 summary=(
-                    f"Ingested {resolved_type} source '{repo_name}' ({len(files)} files) "
+                    f"Ingested {resolved_type} source '{repo_name}' ({len(files)} files); "
+                    f"{project_plan.summary} "
                     f"via LLMHub {self.adapter.tier}/{self.adapter.model} and delegated "
                     f"hierarchical C4 generation to Supervisor"
                     f"{' (LLMHub online)' if llm_ready else ' (deterministic fallback)'}."
@@ -1881,6 +2485,7 @@ class ManagerAgent:
                 agents=[manager_report, *sub_reports],
                 layers=layers,
                 hierarchy=hierarchy,
+                project_plan=plan_model,
             )
         finally:
             if temp_dir:

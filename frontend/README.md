@@ -1,8 +1,8 @@
-# C4 Modelling — Frontend (`c4-model-visualizer/frontend`)
+# Orthos — Frontend (`c4-model-visualizer/frontend`)
 
 > *“Design is the silent ambassador of thought; code is merely its echo.”*
 
-The **C4 Modelling** frontend is an interactive Svelte 5 + Vite single-page application powered by [`@xyflow/svelte`](https://svelteflow.dev/) for exploring, designing, and validating hierarchical [C4 software architecture models](https://c4model.com/) across all four C4 layers (**Context**, **Container**, **Component**, and **Code**) plus a cross-layer **Hierarchy Tree** view.
+The **Orthos** frontend is an interactive Svelte 5 + Vite single-page application powered by [`@xyflow/svelte`](https://svelteflow.dev/) for exploring, designing, and validating hierarchical [C4 software architecture models](https://c4model.com/) across all four C4 layers (**Context**, **Container**, **Component**, and **Code**) plus a cross-layer **Hierarchy Tree** view.
 
 ---
 
@@ -29,7 +29,7 @@ The **C4 Modelling** frontend is an interactive Svelte 5 + Vite single-page appl
 
 ```mermaid
 flowchart TB
-    subgraph UI["C4 Modelling Frontend (Svelte 5 + Vite)"]
+    subgraph UI["Orthos Frontend (Svelte 5 + Vite)"]
         Header["AppHeader.svelte<br/>Brand + Mode Switcher (Visualizer | Developer)"]
         SourceBar["SourceBar.svelte<br/>1. Source Path | 2. Source Type (Local/Github) | 3. Actions"]
         Loader["PfizerLoader.svelte<br/>Animated 'pfizer' Wordmark (Spinning 'z')"]
@@ -108,7 +108,7 @@ c4-model-visualizer/frontend/
         ├── buildCatalog.js     # Developer palette catalog & C4 connection validation rules
         ├── data/               # Default static C4 JSON layers (context, container, component, code)
         └── components/
-            ├── AppHeader.svelte            # C4 modelling header, philosophical quote & tab bar
+            ├── AppHeader.svelte            # Orthos header, catalog/studio nav & tab bar
             ├── SourceBar.svelte            # 3-section source bar (Path, Local/Github Type, Actions)
             ├── LayerSelect.svelte          # C4 layer dropdown (disabled in Tree view)
             ├── HierarchyTreeCanvas.svelte  # 4-tier Context -> Container -> Component -> Code tree

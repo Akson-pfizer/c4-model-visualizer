@@ -1,7 +1,15 @@
 <script>
   import { kindMeta } from '../c4Kinds.js';
+  import { formatFriendlyError } from '../analysisCatalog.js';
 
-  let { layer, selectedNode, onDrillDown, onNavigateUpper, onClose } = $props();
+  let {
+    layer,
+    selectedNode,
+    activeSource = '',
+    onDrillDown,
+    onNavigateUpper,
+    onClose
+  } = $props();
 
   let boundaryNodes = $derived(
     (layer?.nodes ?? []).filter((n) => n.type === 'c4Boundary')
@@ -11,6 +19,42 @@
     if (!selectedNode?.parentId) return null;
     return boundaryNodes.find((b) => b.id === selectedNode.parentId) ?? null;
   });
+
+  let isCodeLayer = $derived(layer?.layer === 'code');
+  let docsBusy = $state(false);
+  let docsStyle = $state('auto');
+  let docsMessage = $state(/** @type {string | null} */ (null));
+  let docsError = $state(/** @type {string | null} */ (null));
+
+  async function generateReferenceDocs() {
+    const source = (activeSource || '').trim();
+    if (!source) {
+      docsError = 'Analyze a local repository first, then generate reference docs from the Code layer.';
+      docsMessage = null;
+      return;
+    }
+    docsBusy = true;
+    docsError = null;
+    docsMessage = null;
+    try {
+      const response = await fetch('/api/docs/reference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, style: docsStyle })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `Backend returned status ${response.status}`);
+      }
+      docsMessage =
+        `${payload.style_label}: ${payload.symbol_count} symbols → ${payload.index_file}` +
+        (payload.build_hint ? `\nBuild: ${payload.build_hint}` : '');
+    } catch (err) {
+      docsError = formatFriendlyError(err, 'Reference Docs');
+    } finally {
+      docsBusy = false;
+    }
+  }
 </script>
 
 <aside class="panel" aria-label="Diagram details">
@@ -120,6 +164,41 @@
 
     <p class="panel__hint">Select any box on the canvas to see its full description and upper-layer parent here.</p>
   {/if}
+
+  {#if isCodeLayer}
+    <div class="panel__docs" aria-label="Code-layer reference documentation">
+      <span class="panel__boundaries-title">Code Reference Docs</span>
+      <p class="panel__desc">
+        Generate Sphinx (Python), TypeDoc/JSDoc (TS/JS), or Markdown API docs from the code layer.
+      </p>
+      <label class="panel__docs-label" for="ref-docs-style">Documentation style</label>
+      <select
+        id="ref-docs-style"
+        class="panel__docs-select"
+        bind:value={docsStyle}
+        disabled={docsBusy}
+      >
+        <option value="auto">Auto (from language mix)</option>
+        <option value="sphinx">Sphinx (Python)</option>
+        <option value="typedoc">TypeDoc / JSDoc</option>
+        <option value="markdown">Markdown API reference</option>
+      </select>
+      <button
+        type="button"
+        class="panel__docs-btn"
+        disabled={docsBusy}
+        onclick={generateReferenceDocs}
+      >
+        {docsBusy ? 'Generating…' : 'Generate Reference Docs'}
+      </button>
+      {#if docsMessage}
+        <p class="panel__docs-ok">{docsMessage}</p>
+      {/if}
+      {#if docsError}
+        <p class="panel__docs-err" role="alert">{docsError}</p>
+      {/if}
+    </div>
+  {/if}
 </aside>
 
 <style>
@@ -185,6 +264,65 @@
     font-size: 12.5px;
     color: var(--text-muted);
     line-height: 1.5;
+  }
+
+  .panel__docs {
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .panel__docs-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .panel__docs-select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12.5px;
+  }
+
+  .panel__docs-btn {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 9px;
+    background: var(--blue-700);
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .panel__docs-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .panel__docs-ok {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--blue-700);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .panel__docs-err {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: #b91c1c;
   }
 
   .panel__note {

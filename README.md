@@ -1,4 +1,4 @@
-# C4 Modelling Platform (`c4-model-visualizer`)
+# Orthos (`c4-model-visualizer`)
 
 > *“Design is the silent ambassador of thought; code is merely its echo.”*
 
@@ -39,7 +39,27 @@ c4-model-visualizer/
 
 ## Quick Start
 
-### Docker Compose (Frontend + Backend)
+### Local (no Docker) — recommended for development
+
+```bash
+# Terminal 1 — backend
+cd c4-model-visualizer/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp -n .env.example .env   # set LLMHUB_API_KEY if using LLMHub
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Terminal 2 — frontend (Vite proxies /api → :8000)
+cd c4-model-visualizer/frontend
+npm install
+npm run dev
+```
+
+- **Frontend UI**: `http://localhost:5173`
+- **Backend API**: `http://localhost:8000`
+
+### Docker Compose (optional)
 
 ```bash
 cd c4-model-visualizer

@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import AppHeader from './lib/components/AppHeader.svelte';
   import SourceBar from './lib/components/SourceBar.svelte';
@@ -9,11 +9,13 @@
   import DetailPanel from './lib/components/DetailPanel.svelte';
   import PfizerLoader from './lib/components/PfizerLoader.svelte';
   import KeyboardShortcutsModal from './lib/components/KeyboardShortcutsModal.svelte';
+  import CatalogPage from './lib/components/CatalogPage.svelte';
   import BuildRepo from './lib/components/build/BuildRepo.svelte';
   import CodeAnalysisView from './lib/components/analysis/CodeAnalysisView.svelte';
+  import ReferenceDocsView from './lib/components/docs/ReferenceDocsView.svelte';
   import { formatFriendlyError } from './lib/analysisCatalog.js';
   import {
-    DEFAULT_RAW_BY_LAYER,
+    EMPTY_RAW_BY_LAYER,
     LAYER_ORDER,
     buildHierarchyFromLayers,
     getLayer,
@@ -21,11 +23,18 @@
     getPrevLayerId
   } from './lib/diagramData.js';
   import { matchShortcutCommand } from './lib/keyboardShortcuts.js';
+  import { fetchProfile, getProfile } from './lib/projectCatalog.js';
+  import {
+    navigateToView,
+    titleForView,
+    viewFromPath
+  } from './lib/appRoute.js';
 
   const TABS = [
     { id: 'read', label: 'Visualizer' },
     { id: 'build', label: 'Developer' },
-    { id: 'analysis', label: 'Code Analysis' }
+    { id: 'analysis', label: 'Code Analysis' },
+    { id: 'docs', label: 'Reference Docs' }
   ];
 
   const MIN_LOADER_MS = 900;
@@ -36,9 +45,10 @@
 
   let selectedLayerId = $state('context');
   let viewMode = $state('layer'); // 'layer' | 'tree'
-  let selectedNode = $state(null);
+  let selectedNode = $state.raw(null);
   let focusedParentNode = $state(null);
-  let loading = $state(true);
+  // Idle until Analyze succeeds — no canvas mount / no fake loader flash.
+  let loading = $state(false);
   let loadGeneration = $state(0);
   let loaderStartedAt = Date.now();
 
@@ -46,23 +56,37 @@
   let navPastStack = $state.raw([]);
   let navFutureStack = $state.raw([]);
   let shortcutsOpen = $state(false);
+  /** @type {'catalog' | 'studio'} — Catalog is `/`; Studio is `/studio`. */
+  let appView = $state(viewFromPath());
+  let profileName = $state(getProfile().display_name);
   let shortcutFeedback = $state(null);
   let buildRepoRef = $state();
 
   // Repository source & multi-agent model state
   let activeSource = $state('');
-  let activeRepoName = $state('Internet Banking System (Demo)');
+  let activeRepoName = $state('No repository loaded');
   let analyzingSource = $state(false);
   let sourceError = $state(null);
-  let agentReports = $state([]);
-  let rawByLayer = $state(DEFAULT_RAW_BY_LAYER);
-  let customHierarchy = $state(null);
+  let agentReports = $state.raw([]);
+  // $state.raw: diagram payloads are large; deep proxies make SvelteFlow lag.
+  let rawByLayer = $state.raw(EMPTY_RAW_BY_LAYER);
+  let customHierarchy = $state.raw(null);
   let sourceRevision = $state(0);
+  /** @type {AbortController | null} */
+  let analyzeAbort = null;
+  let analyzeJobId = $state(/** @type {string | null} */ (null));
 
+  let hasAnalyzed = $derived(Boolean(activeSource.trim()));
   let layer = $derived(
     getLayer(selectedLayerId, rawByLayer, focusedParentNode?.id ?? null)
   );
-  let hierarchy = $derived(customHierarchy ?? buildHierarchyFromLayers(rawByLayer));
+  // Only build the cross-layer tree when Tree view or Developer tab needs it.
+  let hierarchy = $derived.by(() => {
+    if (!hasAnalyzed) return [];
+    if (customHierarchy) return customHierarchy;
+    if (viewMode !== 'tree' && tab !== 'build') return [];
+    return buildHierarchyFromLayers(rawByLayer);
+  });
 
   function getLoaderLabel(isAnalyzing, currentViewMode, layerTitle) {
     if (isAnalyzing) {
@@ -244,6 +268,11 @@
       return;
     }
 
+    // Canvas / layer shortcuts stay locked until Analyze completes.
+    if (!hasAnalyzed && (tab === 'read' || tab === 'build')) {
+      return;
+    }
+
     // Layer number keys 1..4 work in Visualizer & Developer tabs
     if (cmd.startsWith('layer-') && ['1', '2', '3', '4'].includes(cmd.slice(-1))) {
       const idx = Number(cmd.slice(-1)) - 1;
@@ -333,10 +362,39 @@
   }
 
   function handleNodeSelect(node) {
-    selectedNode = node;
+    if (!node) {
+      selectedNode = null;
+      return;
+    }
+    // Detach from SvelteFlow's reactive node graph so the detail panel
+    // doesn't subscribe to per-frame position updates while dragging.
+    const data = {};
+    for (const [k, v] of Object.entries(node.data ?? {})) {
+      if (typeof v !== 'function') data[k] = v;
+    }
+    selectedNode = {
+      id: node.id,
+      type: node.type,
+      parentId: node.parentId,
+      data
+    };
   }
 
-  async function analyzeRepositorySource(sourceInput, selectedType = 'local') {
+  async function analyzeRepositorySource(
+    sourceInput,
+    selectedType = 'local',
+    llmOptions = { use_llm: false, model: null }
+  ) {
+    if (analyzeAbort) {
+      analyzeAbort.abort();
+    }
+    const controller = new AbortController();
+    analyzeAbort = controller;
+    const jobId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `job-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    analyzeJobId = jobId;
     sourceError = null;
     analyzingSource = true;
     triggerLoader();
@@ -348,8 +406,11 @@
         body: JSON.stringify({
           source: sourceInput,
           source_type: selectedType,
-          use_llm: false
-        })
+          use_llm: Boolean(llmOptions?.use_llm),
+          model: llmOptions?.model || null,
+          job_id: jobId
+        }),
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -358,37 +419,118 @@
       }
 
       const payload = await response.json();
-      rawByLayer = payload.layers;
-      customHierarchy = payload.hierarchy;
-      agentReports = payload.agents ?? [];
-      activeSource = payload.source;
-      activeRepoName = `${payload.repo_name} (${payload.source_type})`;
-      sourceRevision += 1;
-      focusedParentNode = null;
-      selectedNode = null;
-      navPastStack = [];
-      navFutureStack = [];
+      if (controller.signal.aborted) return;
+      applyAnalyzedModel(payload);
+      // Full payload is persisted by the backend into the Architect Catalog DB.
     } catch (err) {
-      sourceError = formatFriendlyError(err, 'Repository Analysis');
+      if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        sourceError = 'Repository Analysis stopped.';
+      } else {
+        sourceError = formatFriendlyError(err, 'Repository Analysis');
+      }
       loading = false;
     } finally {
+      if (analyzeAbort === controller) {
+        analyzeAbort = null;
+      }
+      if (analyzeJobId === jobId) {
+        analyzeJobId = null;
+      }
       analyzingSource = false;
     }
   }
 
-  function resetToDemoSource() {
-    sourceError = null;
-    triggerLoader();
-    rawByLayer = DEFAULT_RAW_BY_LAYER;
-    customHierarchy = null;
-    agentReports = [];
-    activeSource = '';
-    activeRepoName = 'Internet Banking System (Demo)';
+  async function stopAnalysis() {
+    const jobId = analyzeJobId;
+    if (analyzeAbort) {
+      analyzeAbort.abort();
+    }
+    analyzingSource = false;
+    loading = false;
+    sourceError = 'Repository Analysis stopped.';
+    if (jobId) {
+      try {
+        await fetch('/api/c4/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId })
+        });
+      } catch {
+        // UI already stopped; backend cancel is best-effort.
+      }
+    }
+  }
+
+  function applyAnalyzedModel(payload) {
+    rawByLayer = payload.layers;
+    customHierarchy = payload.hierarchy;
+    agentReports = payload.agents ?? [];
+    activeSource = payload.source;
+    activeRepoName = `${payload.repo_name} (${payload.source_type})`;
     sourceRevision += 1;
     focusedParentNode = null;
     selectedNode = null;
     navPastStack = [];
     navFutureStack = [];
+    viewMode = 'layer';
+    selectedLayerId = 'context';
+    tab = 'read';
+    triggerLoader();
+  }
+
+  function openCachedCatalogProject(result) {
+    const payload = result?.model;
+    if (!payload?.layers) {
+      sourceError = 'Cached catalog entry is missing diagram data.';
+      return;
+    }
+    sourceError = null;
+    applyAnalyzedModel(payload);
+    setAppView('studio');
+    showShortcutBadge(`Opened ${payload.repo_name} from catalog`);
+  }
+
+  function resetToEmptyWorkspace() {
+    if (analyzingSource) {
+      stopAnalysis();
+    }
+    sourceError = null;
+    loading = false;
+    rawByLayer = EMPTY_RAW_BY_LAYER;
+    customHierarchy = null;
+    agentReports = [];
+    activeSource = '';
+    activeRepoName = 'No repository loaded';
+    sourceRevision += 1;
+    focusedParentNode = null;
+    selectedNode = null;
+    navPastStack = [];
+    navFutureStack = [];
+    viewMode = 'layer';
+    selectedLayerId = 'context';
+  }
+
+  function setAppView(view, { replace = false } = {}) {
+    if (appView !== view) appView = view;
+    navigateToView(view, { replace });
+    document.title = titleForView(view);
+  }
+
+  function openCatalogPage() {
+    setAppView('catalog');
+    fetchProfile().then((p) => {
+      profileName = p.display_name;
+    });
+  }
+
+  function openStudio() {
+    setAppView('studio');
+  }
+
+  function handlePopState() {
+    const next = viewFromPath();
+    appView = next;
+    document.title = titleForView(next);
   }
 
   function selectTab(id, shouldFocus = false) {
@@ -412,191 +554,247 @@
     }
   }
 
+  onMount(() => {
+    // Normalize unknown paths (e.g. /catalog) onto the canonical slug.
+    setAppView(viewFromPath(), { replace: true });
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  });
+
   onDestroy(() => {
     clearTimeout(hideTimer);
     clearTimeout(feedbackTimer);
+    if (analyzeAbort) {
+      analyzeAbort.abort();
+    }
   });
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<AppHeader onOpenShortcuts={() => (shortcutsOpen = true)} />
-
-<SourceBar
-  source={activeSource}
-  analyzing={analyzingSource}
-  error={sourceError}
-  {activeRepoName}
-  agents={agentReports}
-  onAnalyze={analyzeRepositorySource}
-  onResetDemo={resetToDemoSource}
+<AppHeader
+  {profileName}
+  appView={appView}
+  onOpenShortcuts={() => (shortcutsOpen = true)}
+  onOpenCatalog={openCatalogPage}
+  onOpenStudio={openStudio}
 />
 
-<div class="app-tabs-bar">
-  <div class="app-tabs" role="tablist" aria-label="Repository mode">
-    {#each TABS as item (item.id)}
-      <button
-        type="button"
-        role="tab"
-        id="tab-{item.id}"
-        class="app-tabs__tab"
-        aria-selected={tab === item.id}
-        aria-controls="panel-{item.id}"
-        tabindex={tab === item.id ? 0 : -1}
-        bind:this={tabButtons[item.id]}
-        onclick={() => selectTab(item.id)}
-        onkeydown={onTabKeydown}
-      >
-        {item.label}
-      </button>
-    {/each}
+{#if appView === 'catalog'}
+  <CatalogPage
+    onOpenProject={openCachedCatalogProject}
+    onProfileChange={(name) => (profileName = name)}
+  />
+{:else}
+  <SourceBar
+    source={activeSource}
+    analyzing={analyzingSource}
+    error={sourceError}
+    {activeRepoName}
+    agents={agentReports}
+    onAnalyze={analyzeRepositorySource}
+    onStop={stopAnalysis}
+    onResetDemo={resetToEmptyWorkspace}
+  />
+
+  <div class="app-tabs-bar">
+    <div class="app-tabs" role="tablist" aria-label="Repository mode">
+      {#each TABS as item (item.id)}
+        <button
+          type="button"
+          role="tab"
+          id="tab-{item.id}"
+          class="app-tabs__tab"
+          aria-selected={tab === item.id}
+          aria-controls="panel-{item.id}"
+          tabindex={tab === item.id ? 0 : -1}
+          bind:this={tabButtons[item.id]}
+          onclick={() => selectTab(item.id)}
+          onkeydown={onTabKeydown}
+        >
+          {item.label}
+        </button>
+      {/each}
+    </div>
+
+    {#if shortcutFeedback}
+      <output class="shortcut-toast" aria-live="polite">
+        ⌨ {shortcutFeedback}
+      </output>
+    {/if}
   </div>
 
-  {#if shortcutFeedback}
-    <output class="shortcut-toast" aria-live="polite">
-      ⌨ {shortcutFeedback}
-    </output>
-  {/if}
-</div>
-
-<div class="app-panels">
-  <div class="app-panel" role="tabpanel" id="panel-read" aria-labelledby="tab-read" hidden={tab !== 'read'}>
-    <main class="app-main" aria-busy={loading}>
-      <div class="layer-stage">
-        <div class="layer-view">
-          <section class="read-area" aria-label="Interactive diagram area">
-            <header class="read-area__bar">
-              <p class="read-area__hint">
-                {#if viewMode === 'tree'}
-                  <strong>Hierarchy Tree View</strong> · Context → Container → Component → Code Class Modules
-                {:else if focusedParentNode && layer.focusParentId}
-                  <strong>{layer.title} layer</strong> · Zoomed into <strong>{focusedParentNode.name}</strong> ({focusedParentNode.layer})
+  <div class="app-panels">
+    <div class="app-panel" role="tabpanel" id="panel-read" aria-labelledby="tab-read" hidden={tab !== 'read'}>
+      {#if tab === 'read'}
+        <main class="app-main" aria-busy={loading}>
+          <div class="layer-stage">
+            <div class="layer-view">
+              <section
+                class="read-area"
+                class:read-area--inactive={!hasAnalyzed}
+                aria-label="Interactive diagram area"
+              >
+              <header class="read-area__bar">
+                <p class="read-area__hint">
+                  {#if !hasAnalyzed}
+                    <strong>Visualizer idle</strong> · Analyze a repository to unlock the C4 canvas
+                  {:else if viewMode === 'tree'}
+                    <strong>Hierarchy Tree View</strong> · Context → Container → Component → Code Class Modules
+                  {:else if focusedParentNode && layer.focusParentId}
+                    <strong>{layer.title} layer</strong> · Zoomed into <strong>{focusedParentNode.name}</strong> ({focusedParentNode.layer})
+                  {:else}
+                    <strong>{layer.title} layer</strong> · {layer.subtitle}
+                  {/if}
+                </p>
+                <div class="read-area__actions">
+                  <div class="nav-history-strip" role="group" aria-label="Layer navigation undo and redo">
+                    <button
+                      type="button"
+                      class="nav-history-btn"
+                      disabled={!hasAnalyzed || navPastStack.length === 0}
+                      title="Undo layer navigation (⌘Z / Ctrl+Z)"
+                      onclick={() => {
+                        if (undoNavigation()) showShortcutBadge('Undid layer navigation');
+                      }}
+                    >
+                      ↶ Undo
+                    </button>
+                    <button
+                      type="button"
+                      class="nav-history-btn"
+                      disabled={!hasAnalyzed || navFutureStack.length === 0}
+                      title="Redo layer navigation (⌘Y / Ctrl+Y)"
+                      onclick={() => {
+                        if (redoNavigation()) showShortcutBadge('Redid layer navigation');
+                      }}
+                    >
+                      ↷ Redo
+                    </button>
+                  </div>
+                  {#if hasAnalyzed && focusedParentNode && layer.focusParentId && viewMode === 'layer'}
+                    <button
+                      type="button"
+                      class="focus-reset-btn"
+                      onclick={clearFocusedDrillDown}
+                      title="Show all elements in the {layer.title} layer (Esc)"
+                    >
+                      ✕ Show All {layer.title}s
+                    </button>
+                  {/if}
+                  <div class="view-toggle" role="group" aria-label="Diagram visualization mode">
+                    <button
+                      type="button"
+                      class="view-toggle__btn"
+                      class:active={viewMode === 'layer'}
+                      aria-pressed={viewMode === 'layer'}
+                      disabled={!hasAnalyzed}
+                      onclick={() => handleViewModeChange('layer')}
+                    >
+                      Layer
+                    </button>
+                    <button
+                      type="button"
+                      class="view-toggle__btn"
+                      class:active={viewMode === 'tree'}
+                      aria-pressed={viewMode === 'tree'}
+                      disabled={!hasAnalyzed}
+                      onclick={() => handleViewModeChange('tree')}
+                    >
+                      Tree
+                    </button>
+                  </div>
+                  <LayerSelect
+                    idPrefix="read-layer"
+                    value={selectedLayerId}
+                    disabled={!hasAnalyzed || viewMode === 'tree'}
+                    onChange={handleLayerChange}
+                  />
+                </div>
+              </header>
+              <div class="read-area__canvas">
+                {#if hasAnalyzed}
+                  {#key `${selectedLayerId}-${viewMode}-${sourceRevision}-${focusedParentNode?.id ?? 'all'}`}
+                    {#if viewMode === 'tree'}
+                      <HierarchyTreeCanvas
+                        {hierarchy}
+                        {loadGeneration}
+                        onNodeSelect={handleNodeSelect}
+                        onNodeDoubleClick={handleNodeDoubleClick}
+                        onReady={handleDiagramReady}
+                      />
+                    {:else}
+                      <DiagramCanvas
+                        {layer}
+                        {loadGeneration}
+                        onNodeSelect={handleNodeSelect}
+                        onNodeDoubleClick={handleNodeDoubleClick}
+                        onBoundaryClick={handleBoundaryClick}
+                        onReady={handleDiagramReady}
+                      />
+                    {/if}
+                  {/key}
                 {:else}
-                  <strong>{layer.title} layer</strong> · {layer.subtitle}
+                  <div class="canvas-idle" role="status">
+                    <p class="canvas-idle__eyebrow">C4 canvas locked</p>
+                    <h2 class="canvas-idle__title">Analyze a repository first</h2>
+                    <p class="canvas-idle__body">
+                      Enter a local path or GitHub URL above, then press Analyze.
+                      The Visualizer stays inactive until the multi-agent run finishes.
+                    </p>
+                  </div>
                 {/if}
-              </p>
-              <div class="read-area__actions">
-                <div class="nav-history-strip" role="group" aria-label="Layer navigation undo and redo">
-                  <button
-                    type="button"
-                    class="nav-history-btn"
-                    disabled={navPastStack.length === 0}
-                    title="Undo layer navigation (⌘Z / Ctrl+Z)"
-                    onclick={() => {
-                      if (undoNavigation()) showShortcutBadge('Undid layer navigation');
-                    }}
-                  >
-                    ↶ Undo
-                  </button>
-                  <button
-                    type="button"
-                    class="nav-history-btn"
-                    disabled={navFutureStack.length === 0}
-                    title="Redo layer navigation (⌘Y / Ctrl+Y)"
-                    onclick={() => {
-                      if (redoNavigation()) showShortcutBadge('Redid layer navigation');
-                    }}
-                  >
-                    ↷ Redo
-                  </button>
-                </div>
-                {#if focusedParentNode && layer.focusParentId && viewMode === 'layer'}
-                  <button
-                    type="button"
-                    class="focus-reset-btn"
-                    onclick={clearFocusedDrillDown}
-                    title="Show all elements in the {layer.title} layer (Esc)"
-                  >
-                    ✕ Show All {layer.title}s
-                  </button>
-                {/if}
-                <div class="view-toggle" role="group" aria-label="Diagram visualization mode">
-                  <button
-                    type="button"
-                    class="view-toggle__btn"
-                    class:active={viewMode === 'layer'}
-                    aria-pressed={viewMode === 'layer'}
-                    onclick={() => handleViewModeChange('layer')}
-                  >
-                    Layer
-                  </button>
-                  <button
-                    type="button"
-                    class="view-toggle__btn"
-                    class:active={viewMode === 'tree'}
-                    aria-pressed={viewMode === 'tree'}
-                    onclick={() => handleViewModeChange('tree')}
-                  >
-                    Tree
-                  </button>
-                </div>
-                <LayerSelect
-                  idPrefix="read-layer"
-                  value={selectedLayerId}
-                  disabled={viewMode === 'tree'}
-                  onChange={handleLayerChange}
-                />
               </div>
-            </header>
-            <div class="read-area__canvas">
-              {#key `${selectedLayerId}-${viewMode}-${sourceRevision}-${focusedParentNode?.id ?? 'all'}`}
-                {#if viewMode === 'tree'}
-                  <HierarchyTreeCanvas
-                    {hierarchy}
-                    {loadGeneration}
-                    onNodeSelect={handleNodeSelect}
-                    onNodeDoubleClick={handleNodeDoubleClick}
-                    onReady={handleDiagramReady}
-                  />
-                {:else}
-                  <DiagramCanvas
-                    {layer}
-                    {loadGeneration}
-                    onNodeSelect={handleNodeSelect}
-                    onNodeDoubleClick={handleNodeDoubleClick}
-                    onBoundaryClick={handleBoundaryClick}
-                    onReady={handleDiagramReady}
-                  />
-                {/if}
-              {/key}
-            </div>
-          </section>
-          <DetailPanel
-            {layer}
-            {selectedNode}
-            onDrillDown={handleNodeDoubleClick}
-            onNavigateUpper={handleBoundaryClick}
-            onClose={() => (selectedNode = null)}
-          />
-        </div>
-        {#if loading}
-          <div class="layer-loader" out:fade={{ duration: 180 }}>
-            <PfizerLoader label={loaderLabel} />
+            </section>
+            <DetailPanel
+              {layer}
+              selectedNode={hasAnalyzed ? selectedNode : null}
+              {activeSource}
+              onDrillDown={handleNodeDoubleClick}
+              onNavigateUpper={handleBoundaryClick}
+              onClose={() => (selectedNode = null)}
+            />
           </div>
-        {/if}
-      </div>
-    </main>
+          {#if loading || analyzingSource}
+            <div class="layer-loader" out:fade={{ duration: 180 }}>
+              <PfizerLoader label={loaderLabel} />
+            </div>
+          {/if}
+        </div>
+      </main>
+    {/if}
   </div>
 
   <div class="app-panel" role="tabpanel" id="panel-build" aria-labelledby="tab-build" hidden={tab !== 'build'}>
-    <BuildRepo
-      bind:this={buildRepoRef}
-      active={tab === 'build'}
-      layerId={selectedLayerId}
-      {rawByLayer}
-      {hierarchy}
-      {sourceRevision}
-      onLayerChange={(id) => {
-        selectedLayerId = id;
-        selectedNode = null;
-      }}
-    />
+    {#if tab === 'build'}
+      <BuildRepo
+        bind:this={buildRepoRef}
+        active={hasAnalyzed}
+        layerId={selectedLayerId}
+        {rawByLayer}
+        {hierarchy}
+        {sourceRevision}
+        onLayerChange={(id) => {
+          selectedLayerId = id;
+          selectedNode = null;
+        }}
+      />
+    {/if}
   </div>
 
   <div class="app-panel" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== 'analysis'}>
-    <CodeAnalysisView {activeSource} />
+    {#if tab === 'analysis'}
+      <CodeAnalysisView {activeSource} />
+    {/if}
+  </div>
+
+  <div class="app-panel" role="tabpanel" id="panel-docs" aria-labelledby="tab-docs" hidden={tab !== 'docs'}>
+    {#if tab === 'docs'}
+      <ReferenceDocsView {activeSource} />
+    {/if}
   </div>
 </div>
+{/if}
 
 <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
 
@@ -786,10 +984,64 @@
     display: flex;
   }
 
+  .read-area--inactive {
+    background: color-mix(in srgb, var(--canvas-bg) 70%, #dbe4f0);
+  }
+
   .read-area__canvas :global(.canvas) {
     border: none;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .canvas-idle {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 32px;
+    text-align: center;
+    color: var(--text-muted);
+    background:
+      radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--blue-100, #dbeafe) 55%, transparent), transparent 55%),
+      repeating-linear-gradient(
+        -12deg,
+        transparent,
+        transparent 11px,
+        color-mix(in srgb, var(--border) 55%, transparent) 11px,
+        color-mix(in srgb, var(--border) 55%, transparent) 12px
+      );
+  }
+
+  .canvas-idle__eyebrow {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .canvas-idle__title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 750;
+    color: var(--text);
+  }
+
+  .canvas-idle__body {
+    margin: 0;
+    max-width: 420px;
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+
+  .view-toggle__btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .layer-stage {

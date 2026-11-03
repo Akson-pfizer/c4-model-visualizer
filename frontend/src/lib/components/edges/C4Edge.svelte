@@ -36,9 +36,11 @@
 <BaseEdge {id} {path} style={strokeStyle} {markerStart} {markerEnd} />
 
 {#if label}
+  {@const short =
+    String(label).length > 42 ? `${String(label).slice(0, 40).trimEnd()}…` : label}
   <EdgeLabel x={labelX} y={labelY}>
-    <div class="c4-edge-label">
-      <span class="c4-edge-label__text">{label}</span>
+    <div class="c4-edge-label" title={label}>
+      <span class="c4-edge-label__text">{short}</span>
       {#if data?.technology}
         <span class="c4-edge-label__tech">[{data.technology}]</span>
       {/if}
@@ -48,22 +50,33 @@
 
 <style>
   .c4-edge-label {
+    max-width: 132px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 10.5px;
-    line-height: 1.3;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 9.5px;
+    line-height: 1.2;
     color: var(--text);
     box-shadow: var(--shadow-sm);
     text-align: center;
-    white-space: nowrap;
+  }
+
+  .c4-edge-label__text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
   }
 
   .c4-edge-label__tech {
     display: block;
     font-family: var(--mono);
-    font-size: 9.5px;
+    font-size: 8.5px;
     color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

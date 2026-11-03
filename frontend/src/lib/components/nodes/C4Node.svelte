@@ -4,6 +4,21 @@
 
   let { data, selected } = $props();
   let meta = $derived(kindMeta(data.kind));
+
+  /** Short tech chip — keep one readable line on the card. */
+  let techLabel = $derived.by(() => {
+    const raw = String(data.technology || '').trim();
+    if (!raw) return '';
+    return raw.length > 36 ? `${raw.slice(0, 34)}…` : raw;
+  });
+
+  /** Compact body copy — prefer first sentence / clause. */
+  let shortDesc = $derived.by(() => {
+    const raw = String(data.description || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    const cut = raw.split(/(?<=[.!?])\s+|;\s+| — | - /)[0] || raw;
+    return cut.length > 88 ? `${cut.slice(0, 86)}…` : cut;
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -20,21 +35,21 @@
       data.onDrillDown();
     }
   }}
-  title={data.nextLayer
-    ? `Double-click to zoom into the ${data.nextLayer} layer for "${data.name}"`
-    : data.name}
+  title={[data.name, data.technology, data.description].filter(Boolean).join('\n')}
 >
   <Handle type="target" position={Position.Left} />
   <Handle type="target" position={Position.Top} id="top" />
 
   <span class="c4-node__stereotype">«{meta.stereotype}»</span>
   <span class="c4-node__name">{data.name}</span>
-  {#if data.technology}
-    <span class="c4-node__tech">[{data.technology}]</span>
+  {#if techLabel}
+    <span class="c4-node__tech">[{techLabel}]</span>
   {/if}
-  <p class="c4-node__desc">{data.description}</p>
+  {#if shortDesc}
+    <p class="c4-node__desc">{shortDesc}</p>
+  {/if}
   {#if data.nextLayer}
-    <span class="c4-node__drill-hint">⤢ Double-click → {data.nextLayer}</span>
+    <span class="c4-node__drill-hint">↕ {data.nextLayer}</span>
   {/if}
 
   <Handle type="source" position={Position.Right} />
@@ -43,10 +58,11 @@
 
 <style>
   .c4-node {
-    width: 220px;
-    height: 150px;
-    padding: 10px 12px;
-    border-radius: 10px;
+    width: 200px;
+    height: 118px;
+    box-sizing: border-box;
+    padding: 7px 10px 6px;
+    border-radius: 9px;
     border: 1.5px solid var(--node-border);
     background: var(--node-bg);
     color: var(--node-fg);
@@ -54,13 +70,11 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 2px;
+    gap: 1px;
     text-align: center;
     cursor: pointer;
     user-select: none;
-    transition:
-      box-shadow 0.15s ease,
-      transform 0.15s ease;
+    overflow: hidden;
   }
 
   .c4-node:hover {
@@ -68,10 +82,7 @@
   }
 
   .c4-node.selected {
-    box-shadow:
-      0 0 0 3px var(--accent-soft),
-      var(--shadow-md);
-    transform: translateY(-1px);
+    box-shadow: 0 0 0 2px var(--accent-soft);
   }
 
   .c4-node.shape-pill {
@@ -83,7 +94,7 @@
   }
 
   .c4-node.shape-rect-accent {
-    border-left-width: 5px;
+    border-left-width: 4px;
   }
 
   .c4-node.shape-rect-code {
@@ -92,35 +103,41 @@
   }
 
   .c4-node.shape-rect-db {
-    border-radius: 10px 10px 16px 16px;
+    border-radius: 9px 9px 14px 14px;
   }
 
   .c4-node__stereotype {
-    font-size: 9.5px;
-    letter-spacing: 0.03em;
-    opacity: 0.85;
+    font-size: 8.5px;
+    letter-spacing: 0.02em;
+    opacity: 0.78;
+    line-height: 1.1;
   }
 
   .c4-node__name {
-    font-size: 13.5px;
-    font-weight: 700;
-    line-height: 1.22;
+    font-size: 12px;
+    font-weight: 750;
+    line-height: 1.15;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .c4-node__tech {
-    font-size: 10px;
+    font-size: 9px;
     font-family: var(--mono);
-    opacity: 0.85;
+    opacity: 0.82;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.15;
   }
 
   .c4-node__desc {
-    margin-top: 4px;
-    font-size: 10.5px;
-    line-height: 1.3;
-    opacity: 0.92;
+    margin: 3px 0 0;
+    font-size: 9.5px;
+    line-height: 1.2;
+    opacity: 0.9;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -128,11 +145,12 @@
   }
 
   .c4-node__drill-hint {
-    margin-top: 3px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    opacity: 0.78;
+    margin-top: 2px;
+    font-size: 8.5px;
+    font-weight: 750;
+    letter-spacing: 0.02em;
+    text-transform: capitalize;
+    opacity: 0.72;
+    line-height: 1.1;
   }
 </style>

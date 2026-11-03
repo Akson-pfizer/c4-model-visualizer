@@ -66,6 +66,8 @@ class Settings:
 
     model_powerful: str = "gpt-4o"
     model_medium: str = "gpt-4.1-mini"
+    # Selectable chat model IDs for the UI (from LLMHUB_MODEL_OPTIONS / yaml).
+    model_options: list[str] = field(default_factory=list)
 
     max_context_chars: int = 24000
     port: int = 8000
@@ -118,8 +120,11 @@ def _build_settings(config_path: Path | None = None) -> Settings:
         "LLMHUB_BASE_URL",
         str(llmhub.get("base_url") or "https://llmhub.platforms.pfizer/v1"),
     ).rstrip("/")
+    # Accept pasted chat/completions URLs and host-only values.
+    for suffix in ("/chat/completions", "/completions", "/models"):
+        if base_url.endswith(suffix):
+            base_url = base_url[: -len(suffix)].rstrip("/")
     if not base_url.endswith("/v1"):
-        # Accept host-only config and normalize to OpenAI-compatible root.
         base_url = f"{base_url}/v1"
 
     api_key = os.getenv("LLMHUB_API_KEY") or str(llmhub.get("api_key") or "")
@@ -137,11 +142,25 @@ def _build_settings(config_path: Path | None = None) -> Settings:
     powerful = os.getenv(
         "LLMHUB_MODEL_POWERFUL",
         str(models.get("powerful") or "gpt-4o"),
-    )
+    ).strip()
     medium = os.getenv(
         "LLMHUB_MODEL_MEDIUM",
         str(models.get("medium") or "gpt-4.1-mini"),
-    )
+    ).strip()
+
+    options_env = os.getenv("LLMHUB_MODEL_OPTIONS", "").strip()
+    if options_env:
+        model_options = [m.strip() for m in options_env.split(",") if m.strip()]
+    else:
+        yaml_options = models.get("options") or []
+        if isinstance(yaml_options, str):
+            model_options = [m.strip() for m in yaml_options.split(",") if m.strip()]
+        else:
+            model_options = [str(m).strip() for m in yaml_options if str(m).strip()]
+    # Always include tier defaults so the UI dropdown is never empty.
+    for candidate in (powerful, medium):
+        if candidate and candidate not in model_options:
+            model_options.append(candidate)
 
     max_context = int(
         os.getenv("MAX_CONTEXT_CHARS", str(app.get("max_context_chars") or 24000))
@@ -218,6 +237,7 @@ def _build_settings(config_path: Path | None = None) -> Settings:
         request_timeout_seconds=timeout,
         model_powerful=powerful,
         model_medium=medium,
+        model_options=model_options,
         max_context_chars=max_context,
         port=port,
         cors_origins=cors,

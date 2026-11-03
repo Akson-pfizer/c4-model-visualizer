@@ -35,6 +35,9 @@ def _strip_code_fences(text: str) -> str:
 
 def _normalize_base_url(base_url: str) -> str:
     cleaned = base_url.rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/models"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].rstrip("/")
     if not cleaned.endswith("/v1"):
         cleaned = f"{cleaned}/v1"
     return cleaned
@@ -149,3 +152,44 @@ def is_hub_reachable() -> bool:
 
 def list_models() -> list[str]:
     return get_adapter("c4-manager").list_models()
+
+
+_NON_CHAT_MARKERS = (
+    "embedding",
+    "embed",
+    "whisper",
+    "tts",
+    "audio",
+    "dall-e",
+    "dalle",
+    "gpt-image",
+    "image-1",
+    "moderation",
+    "transcribe",
+    "realtime",
+)
+
+
+def is_chat_model(model_id: str) -> bool:
+    """True for chat/completions models; false for embeddings, image, audio, etc."""
+    mid = (model_id or "").strip().lower()
+    if not mid:
+        return False
+    return not any(marker in mid for marker in _NON_CHAT_MARKERS)
+
+
+def filter_chat_models(model_ids: list[str]) -> list[str]:
+    """Keep only chat-capable model IDs, preserving order and uniqueness."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for mid in model_ids:
+        name = str(mid).strip()
+        if not name or name in seen or not is_chat_model(name):
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def list_chat_models() -> list[str]:
+    return filter_chat_models(list_models())

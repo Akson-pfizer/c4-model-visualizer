@@ -1,6 +1,8 @@
 // Cross-platform keyboard shortcut matcher and catalog supporting both
 // macOS (⌘ Cmd / ⌥ Option / ⇧ Shift) and Windows / Linux (Ctrl / Alt / Shift).
 
+import { cloneFlowElements } from './plainClone.js';
+
 export const SHORTCUT_GROUPS = [
   {
     group: 'History & Clipboard (Canvas & Navigation)',
@@ -204,19 +206,5 @@ export function matchShortcutCommand(event) {
  * can be safely cloned for undo/redo history and clipboard storage.
  */
 export function cloneDiagramSnapshot(nodes = [], edges = []) {
-  const cleanNodes = nodes.map((n) => {
-    const cleanData = {};
-    for (const [k, v] of Object.entries(n.data ?? {})) {
-      if (typeof v !== 'function') {
-        cleanData[k] = v;
-      }
-    }
-    return structuredClone({
-      ...n,
-      data: cleanData
-    });
-  });
-
-  const cleanEdges = edges.map((e) => structuredClone(e));
-  return { nodes: cleanNodes, edges: cleanEdges };
+  return cloneFlowElements(nodes, edges);
 }

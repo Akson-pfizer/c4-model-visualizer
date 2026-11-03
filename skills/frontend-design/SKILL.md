@@ -29,7 +29,7 @@ Breaks LLM "distributional convergence" (generic layouts, arbitrary gradients, u
    - **One Page, Tabs — Not Multiple Pages**: Keep users oriented and preserve filter/selection state across tab switches.
    - **Two Docked Collapsible Sidebars**: Left sidebar for content/search filters; right sidebar for attribute/facet inspection.
    - **Modals, Not New Tabs**: Use a single shared native `<dialog>` component (~90% viewport, visible `✕` close button) instead of opening external browser tabs.
-   - **Matching Titles**: Page header title and browser `<title>` must be identical (`C4 modelling`).
+   - **Matching Titles**: Page header title and browser `<title>` must be identical (`Orthos`).
 
 ## 3. `ui-ux-master` Standards & Evaluation Rubric
 - **Nielsen's 10 Heuristics (0–4 NN/g Severity Scale)**:

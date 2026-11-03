@@ -1,4 +1,4 @@
-# C4 Modelling — Multi-Agent Backend (`c4-model-visualizer/backend`)
+# Orthos — Multi-Agent Backend (`c4-model-visualizer/backend`)
 
 A FastAPI multi-agent service that generates [C4 software architecture models](https://c4model.com), 4-tier Hierarchy Trees, sandbox verifications, and Confluence-ready engineering documentation from any local repository path or remote GitHub URL.
 

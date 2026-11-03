@@ -16,6 +16,7 @@
   import Legend from '../Legend.svelte';
   import { ARROWS, SHAPES } from '../../buildCatalog.js';
   import { cloneDiagramSnapshot } from '../../keyboardShortcuts.js';
+  import { plainClone } from '../../plainClone.js';
 
   let {
     activeArrowId = 'uses',
@@ -112,9 +113,13 @@
     recordSnapshot();
   }
 
-  $effect(() => {
+  function publishChange() {
     onChange?.(nodes, edges);
-  });
+  }
+
+  function handleNodeDragStop() {
+    publishChange();
+  }
 
   let seq = 1;
 
@@ -170,15 +175,16 @@
           data: { label: `${shape.name} ${seq}` }
         };
         nodes = [boundary, ...nodes];
+        publishChange();
         return;
       }
 
       const node = {
         id,
         type: 'c4Node',
-        position: { x: Math.round(point.x - 110), y: Math.round(point.y - 75) },
-        width: 220,
-        height: 150,
+        position: { x: Math.round(point.x - 100), y: Math.round(point.y - 59) },
+        width: 200,
+        height: 118,
         zIndex: 1,
         data: {
           kind: KIND_BY_SHAPE[shape.id] ?? 'container',
@@ -188,6 +194,7 @@
         }
       };
       nodes = decorateNodes([...nodes, node]);
+      publishChange();
       return;
     }
 
@@ -199,6 +206,7 @@
       const target = elementNodes[elementNodes.length - 1].id;
       seq += 1;
       edges = [...edges, makeEdge(`edge-${seq}-${arrow.id}`, source, target, arrow.id)];
+      publishChange();
     }
   }
 
@@ -211,6 +219,7 @@
     nodes = decorateNodes(previousSnap.nodes);
     edges = previousSnap.edges;
     notifyHistoryState();
+    publishChange();
     return true;
   }
 
@@ -223,6 +232,7 @@
     nodes = decorateNodes(nextSnap.nodes);
     edges = nextSnap.edges;
     notifyHistoryState();
+    publishChange();
     return true;
   }
 
@@ -279,7 +289,7 @@
       const newId = `${orig.id}-copy-${seq}`;
       idMap.set(orig.id, newId);
       return {
-        ...structuredClone(orig),
+        ...plainClone(orig),
         id: newId,
         selected: true,
         position: {
@@ -300,7 +310,7 @@
       .map((e) => {
         seq += 1;
         return {
-          ...structuredClone(e),
+          ...plainClone(e),
           id: `edge-${seq}-copy`,
           source: idMap.get(e.source),
           target: idMap.get(e.target)
@@ -310,6 +320,7 @@
     const deselectedExisting = nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
     nodes = decorateNodes([...deselectedExisting, ...newNodes]);
     edges = [...edges, ...newEdges];
+    publishChange();
     return newNodes.length;
   }
 
@@ -332,6 +343,7 @@
         !selectedNodeIds.has(e.source) &&
         !selectedNodeIds.has(e.target)
     );
+    publishChange();
     return selectedNodeIds.size + selectedEdgeIds.size;
   }
 
@@ -357,6 +369,7 @@
       ...edges,
       makeEdge(`edge-${seq}-${activeArrowId}`, connection.source, connection.target, activeArrowId)
     ];
+    publishChange();
   }
 
   function onDragOver(event) {
@@ -387,6 +400,7 @@
     onnodeclick={handleNodeClick}
     onnodedoubleclick={handleNodeDoubleClick}
     onnodedragstart={handleNodeDragStart}
+    onnodedragstop={handleNodeDragStop}
     zoomOnDoubleClick={false}
     fitView
     fitViewOptions={{ padding: 0.2 }}
