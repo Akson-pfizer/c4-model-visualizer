@@ -15,6 +15,8 @@
   import C4Node from './nodes/C4Node.svelte';
   import C4Edge from './edges/C4Edge.svelte';
   import CollapsibleLegend from './CollapsibleLegend.svelte';
+  import PanControlButton from './PanControlButton.svelte';
+  import { panTool } from '../panMode.svelte.js';
   import FullscreenToggle from './FullscreenToggle.svelte';
   import { LAYER_ORDER } from '../diagramData.js';
 
@@ -202,13 +204,17 @@
       minZoom={0.2}
       maxZoom={1.5}
       zoomOnDoubleClick={false}
+      nodesDraggable={!panTool.on}
+      nodesConnectable={!panTool.on}
+      class={panTool.on ? 'is-pan-mode' : ''}
       proOptions={{ hideAttribution: true }}
       onnodeclick={handleNodeClick}
       onnodedoubleclick={handleNodeDoubleClick}
       onpaneclick={handlePaneClick}
     >
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />
-      <Controls showInteractive={false}>
+      <Controls showLock={false}>
+        <PanControlButton />
         {#if legend.length}
           <ControlButton
             class={legendOpen ? 'legend-control is-active' : 'legend-control'}

@@ -19,8 +19,15 @@
 <style>
   .legend-panel {
     max-width: min(420px, calc(100vw - 80px));
-    /* Clear the vertical Controls stack (+ / − / fit / lock / legend) */
+    /* Clear the vertical Controls stack (+ / − / fit / pan / legend) */
     margin: 0 0 196px 0;
+    pointer-events: auto;
+  }
+
+  /* The bottom margin makes the hosting Panel span over the Controls and the
+     canvas; let clicks and pan drags fall through everywhere but the legend. */
+  :global(.svelte-flow__panel:has(> .legend-panel)) {
+    pointer-events: none;
   }
 
   .legend-panel :global(.legend) {

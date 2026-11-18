@@ -16,6 +16,8 @@
   import C4Boundary from './nodes/C4Boundary.svelte';
   import C4Edge from './edges/C4Edge.svelte';
   import CollapsibleLegend from './CollapsibleLegend.svelte';
+  import PanControlButton from './PanControlButton.svelte';
+  import { panTool } from '../panMode.svelte.js';
   import {
     alignEdgesToVisibility,
     alignNodesInBoundaries,
@@ -344,7 +346,9 @@
   minZoom={0.12}
   maxZoom={1.6}
   zoomOnDoubleClick={false}
-  nodesDraggable={true}
+  nodesDraggable={!panTool.on}
+  nodesConnectable={!panTool.on}
+  class={panTool.on ? 'is-pan-mode' : ''}
   proOptions={{ hideAttribution: true }}
   oninit={handleInit}
   onnodeclick={handleNodeClick}
@@ -353,7 +357,8 @@
   onnodedragstart={handleNodeDragStart}
 >
   <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="#d7e3f1" />
-  <Controls showInteractive={false}>
+  <Controls showLock={false}>
+    <PanControlButton />
     {#if (layer.legend || []).length}
       <ControlButton
         class={legendOpen ? 'legend-control is-active' : 'legend-control'}
