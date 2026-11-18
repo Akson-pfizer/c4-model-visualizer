@@ -38,9 +38,13 @@
     for (const item of LAYERS) {
       const layerData = getLayer(item.id, sourceMap);
       // plainClone avoids structuredClone failures on Svelte reactive Proxies.
-      const nodes = plainClone(layerData.nodes).map((n) =>
-        n.type === 'c4Boundary' ? { ...n, selectable: true, draggable: true } : n
-      );
+      // Boundaries drop their per-node draggable flag so the canvas-wide
+      // nodesDraggable (off while the Pan tool is on) decides instead.
+      const nodes = plainClone(layerData.nodes).map((n) => {
+        if (n.type !== 'c4Boundary') return n;
+        const { draggable: _draggable, ...rest } = n;
+        return { ...rest, selectable: true };
+      });
       const edges = plainClone(layerData.edges);
       map[item.id] = { nodes, edges };
     }

@@ -15,6 +15,8 @@
   import C4Boundary from '../nodes/C4Boundary.svelte';
   import C4Edge from '../edges/C4Edge.svelte';
   import CollapsibleLegend from '../CollapsibleLegend.svelte';
+  import PanControlButton from '../PanControlButton.svelte';
+  import { panTool } from '../../panMode.svelte.js';
   import { ARROWS, SHAPES } from '../../buildCatalog.js';
   import { cloneDiagramSnapshot } from '../../keyboardShortcuts.js';
   import { plainClone } from '../../plainClone.js';
@@ -405,6 +407,9 @@
     onnodedragstart={handleNodeDragStart}
     onnodedragstop={handleNodeDragStop}
     zoomOnDoubleClick={false}
+    nodesDraggable={!panTool.on}
+    nodesConnectable={!panTool.on}
+    class={panTool.on ? 'is-pan-mode' : ''}
     fitView
     fitViewOptions={{ padding: 0.2 }}
     minZoom={0.3}
@@ -412,7 +417,8 @@
     proOptions={{ hideAttribution: true }}
   >
     <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d7e3f1" />
-    <Controls>
+    <Controls showLock={false}>
+      <PanControlButton />
       {#if legend.length > 0}
         <ControlButton
           class={legendOpen ? 'legend-control is-active' : 'legend-control'}
